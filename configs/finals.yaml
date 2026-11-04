@@ -1,0 +1,37 @@
+# The two selected Kaggle finals (2026-11-04). Every constant that was fitted on the train holdouts (last30 / autumn) is pinned
+# here: regime weights, U-Net2 share c, pp2 alphas. A rerun trains the members only; it does not refit these.
+# Members (test components, template row order): lgbm = LightGBM 8x x seeds 42/7/123 (mean), mlp = MLP random_12 x3,
+# unet = U-Net x5 (42/7/123/2031/137), unet2 = U-Net2 (width 48, 50 epochs, win 576, ctx 144) x3.
+# Queue (both): onset A_hyb on clean-imputer hybrid labels (decode30), ongoing decode(0.5 family A v2 + 0.5 family B noloc v2l), v2l's
+# extra training windows selected on the clean-imputer labels too (no validation/private data in any Task 2 fit).
+v3:
+  name: cand_combo_v3c
+  public_lb: 0.88369
+  sha256: 341a64b3ddeff7cb8205037c1df00e005129b1ecf4f2247e3d173a5b060aea76
+  state_raw_sha256: d402bf7a5af9cd5c0c452767a73d10cf8783e74b3c45f6a26627244188790105   # the mixed state before pp2
+  state: regime mix of the four members (variant m_bc), weights below
+  mix:                               # tfb.t1.ensemble.apply; bins of v / v_f of the ref_w mix of lgbm / mlp / unet
+    members: [lgbm, mlp, unet, unet2]
+    ref_w: [0.25, 0.25, 0.5]
+    basis: v
+    cuts: [0.5, 0.7, 0.85]
+    sp: [[0.0, 0.15, 0.05, 0.8], [0.0, 0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0], [0.05, 0.05, 0.0, 0.9]]
+    fl: [[0.15, 0.0, 0.0, 0.85], [0.0, 0.05, 0.15, 0.8], [0.0, 0.0, 0.0, 1.0], [0.15, 0.0, 0.0, 0.85]]
+  alphas: configs/alphas_v3.json
+  queue: outputs/t2/queue_onset_Ahyb_mix_clean_E50v2l.csv
+v1:
+  name: cand_combo_v1c
+  public_lb: 0.88317
+  sha256: 15aceedd6acff579f952936709d82b24f03d693fb2657368f6534782254c8c01
+  state_raw_sha256: f71f8cc28232897f77f381ef070ba8d37cdf7c7d177f2e1186ad098584545c53   # the mixed state before pp2
+  state: (1 - c) (0.25 lgbm + 0.25 mlp + 0.5 unet) + c unet2
+  blend: {b: 0.5, c: 0.5}
+  alphas: reports/physics_alphas_pp2.json
+  queue: outputs/t2/queue_onset_Ahyb_mix_clean_E50v2l.csv
+odme: outputs/t4/path_flow_submission.csv
+pp2: fd_v_a0.5
+components:                          # file names inside the components dir
+  lgbm: state_submission_ens_v6t1s3.csv
+  mlp: state_submission_mlp_r12_s3.csv.gz
+  unet: state_unet_s5.csv
+  unet2: state_unet2_s3.csv
