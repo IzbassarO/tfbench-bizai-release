@@ -28,6 +28,8 @@ validation **and** private), its `.sha256`, `outputs/run.log` and `outputs/run_l
 | Task 2 queue (0.30) | onset: decode30(0.5 family A v4 + 0.5 family B noloc), both trained on hybrid labels (released truth, clean-imputer speed on hidden train cells); ongoing: exact expected-IoU top-m of 0.5 family A v2 + 0.5 t2b v2l over the 6 horizons. No Task 2 fit sees validation/private data: labels are released train truth or the clean imputer (train rows only), and every training-window selector reads those labels | `tfb.t2`, `tfb.t2b` |
 | Task 4 ODME (0.20) | split-local projection min ‖f − b‖ s.t. A f = c, f ≥ 0 (split-local prior and counts) | `tfb.t4.project` |
 
+Ablations, the local-vs-public transfer of every step and the Task 2 rule audit: `docs/ABLATIONS.md`.
+
 Constants that were chosen on our train-split holdouts (last 30 days, autumn) are **pinned** in `configs/finals.yaml`
 and `configs/alphas_v3.json` / `reports/physics_alphas_pp2.json`: the regime weights, the U-Net2 share c = 0.5 and
 the pp2 alphas. A run trains the members; it does not repeat that selection.
