@@ -189,6 +189,7 @@ def stage_cv(mode="pure", log=print) -> pd.DataFrame:
 
 def stage_final(mode="pure", log=print):
     """Final members on hybrid labels -> released T+30 probabilities (pickle) for A_hyb and stage 2."""
+    OUT.mkdir(parents=True, exist_ok=True)
     y, st = V.relabel("final", v4_label_fn(mode)); st.to_csv(OUT / f"v4_relabel_final_{mode}.csv", index=False)
     ms = V.frozen_models() if not (st.flip_to_pos.sum() + st.flip_to_neg.sum()) else V.fit("final", f"hyb_{mode}", y, V4_SEEDS)[0]
     pv4h = V.predict_released(ms)
