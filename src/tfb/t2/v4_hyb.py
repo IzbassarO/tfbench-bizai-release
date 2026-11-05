@@ -25,9 +25,10 @@ from .io import history_arrays, panel_names, read_network, read_panel_arrays, re
 from .run import PROJECT, log
 from .v2_experiment import load_model
 from .v4_model import fit_model, load_pool
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 OUT = PROJECT / "outputs/t2"
-ROOT = PROJECT / "data/kaggle_public"
+ROOT = RELEASE_ROOT
 REL = OUT / "v4/released"
 HSEL = OUT / "v4/data_hyb"
 CUT = {"janfeb": "2031-01-01", "octnov": "2030-10-01", "final": "2031-03-01"}

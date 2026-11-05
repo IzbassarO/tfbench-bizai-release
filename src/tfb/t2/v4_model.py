@@ -16,6 +16,7 @@ from .run import PROJECT,log
 from .train import Classifier,decode_probabilities,fit_classifier,score_window
 from .v2_experiment import load_model
 from .v3_robust import portable_mask
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 SEEDS=(42,137,271)
 
@@ -211,7 +212,7 @@ def evaluate(args,fold):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--root",type=Path,default=PROJECT/"data/kaggle_public")
+    p.add_argument("--root",type=Path,default=RELEASE_ROOT)
     p.add_argument("--output",type=Path,default=PROJECT/"outputs/t2")
     p.add_argument("--fold",choices=["janfeb","octnov","final"],default="janfeb")
     p.add_argument("--stage",choices=["normal","lobo","evaluate","all"],default="all")

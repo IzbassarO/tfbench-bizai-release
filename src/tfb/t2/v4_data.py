@@ -20,6 +20,7 @@ from .labels import make_labels
 from .run import PROJECT, log
 from .v2_data import CUTOFF, extra_features
 from .v2_experiment import FOLDS
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 FOLDS_V4 = ("janfeb", "octnov", "final")
 EXPECTED_NEW_FEATURES = 104
@@ -248,7 +249,7 @@ def prepare_features(args, fold, panel, network, arrays):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root",type=Path,default=PROJECT/"data/kaggle_public")
+    parser.add_argument("--root",type=Path,default=RELEASE_ROOT)
     parser.add_argument("--output",type=Path,default=PROJECT/"outputs/t2")
     parser.add_argument("--fold",action="append",choices=FOLDS_V4)
     parser.add_argument("--panel",action="append")

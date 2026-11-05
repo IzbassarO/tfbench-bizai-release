@@ -30,6 +30,7 @@ from .v2_experiment import load_model
 from .v3_artifacts import KEYS, _contracts, _validate_queue
 from .v4_export import WindowProbability, _remember, _sha
 from .v4_features import build_onset_features
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 
 SEEDS = (42, 137, 271)
@@ -347,7 +348,7 @@ def predict(args, *, check=True):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=PROJECT / "data/kaggle_public")
+    parser.add_argument("--root", type=Path, default=RELEASE_ROOT)
     parser.add_argument("--output", type=Path, default=PROJECT / "outputs/t2")
     parser.add_argument("--carrier", type=Path, default=PROJECT / "outputs/submissions/baseline_v0.csv")
     parser.add_argument("--threads", type=int, default=2)

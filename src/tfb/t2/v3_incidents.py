@@ -15,6 +15,7 @@ import zipfile
 
 import numpy as np
 import pandas as pd
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 
 CONDITIONS = ("queue_onset", "queue_ongoing")
@@ -471,7 +472,7 @@ def collect_metrics(root, output, *, target_split="validation"):
 def main():
     project = Path(__file__).resolve().parents[3]
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=project / "data/kaggle_public")
+    parser.add_argument("--root", type=Path, default=RELEASE_ROOT)
     parser.add_argument("--output", type=Path, default=project / "outputs/t2/v3/incidents")
     parser.add_argument("--target-split", choices=["validation", "private"], default="validation")
     args = parser.parse_args()

@@ -21,6 +21,7 @@ from .v2_decode import decode_calibrated
 from .v2_experiment import FOLDS, load_model
 from .v2_predict import member_parts
 from .v3_incidents import window_shift_metrics
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 
 CONDITION = "queue_ongoing"
@@ -169,7 +170,7 @@ def score_temporal(args, fold):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--root", type=Path, default=PROJECT/"data/kaggle_public")
+    p.add_argument("--root", type=Path, default=RELEASE_ROOT)
     p.add_argument("--output", type=Path, default=PROJECT/"outputs/t2")
     p.add_argument("--fold", choices=["janfeb","octnov","exact","final"], default="janfeb")
     p.add_argument("--stage", choices=["fit","predict","score","all"], default="all")

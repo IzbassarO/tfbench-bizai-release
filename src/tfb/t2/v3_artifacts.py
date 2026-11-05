@@ -18,6 +18,7 @@ import pandas as pd
 import polars as pl
 
 from .run import PROJECT
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 
 KEYS = ["window_id", "timestamp", "link_id"]
@@ -204,7 +205,7 @@ def make_check(args, queue):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=PROJECT / "data/kaggle_public")
+    parser.add_argument("--root", type=Path, default=RELEASE_ROOT)
     parser.add_argument("--output", type=Path, default=PROJECT / "outputs/t2")
     parser.add_argument("--stage", choices=["probe", "verify", "check", "all"], default="check")
     parser.add_argument("--queue", type=Path, action="append")

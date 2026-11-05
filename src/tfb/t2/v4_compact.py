@@ -21,6 +21,7 @@ from .io import dump_json, panel_names
 from .run import PROJECT, log
 from .train import Classifier, decode_probabilities, score_window
 from .v2_experiment import load_model
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 
 FEATURES = (
@@ -347,7 +348,7 @@ def evaluate(args, fold, variants, radii):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--root", type=Path, default=PROJECT / "data/kaggle_public")
+    p.add_argument("--root", type=Path, default=RELEASE_ROOT)
     p.add_argument("--output", type=Path, default=PROJECT / "outputs/t2")
     p.add_argument("--fold", choices=["janfeb", "octnov", "final"], default="janfeb")
     p.add_argument("--variant", action="append", choices=list(VARIANTS))

@@ -27,6 +27,7 @@ from .v2_decode import decode_calibrated
 from .v2_experiment import SEEDS, load_model
 from .v2_predict import member_parts
 from .v3_artifacts import KEYS, _contracts, _validate_queue
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 
 @dataclass
@@ -235,7 +236,7 @@ def export_probabilities(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=PROJECT / "data/kaggle_public")
+    parser.add_argument("--root", type=Path, default=RELEASE_ROOT)
     parser.add_argument("--output", type=Path, default=PROJECT / "outputs/t2")
     parser.add_argument("--threads", type=int, default=2)
     args = parser.parse_args()

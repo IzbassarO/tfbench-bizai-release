@@ -24,6 +24,7 @@ from .run import CONDITIONS, PROJECT, log
 from .train import Classifier, fit_classifier, score_window
 from .v2_decode import decode_calibrated, fit_cardinality_calibration
 from .v2_validation import validate_probability_pack, validate_candidate_cohort
+from ..io import RELEASE as RELEASE_ROOT   # TFB_RELEASE (run.py --data), else data/kaggle_public
 
 WEAK = ("D7_I10_W", "D7_I210_W", "D7_I405_S")
 FOLDS = {"sep": "v2_sep_cal", "octnov": "v2_octnov", "dec": "v2_dec_cal",
@@ -388,7 +389,7 @@ def choose_gated(args,scores,nonempty=None):
 def main():
     started=time.perf_counter()
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--root",type=Path,default=PROJECT/"data/kaggle_public")
+    p.add_argument("--root",type=Path,default=RELEASE_ROOT)
     p.add_argument("--output",type=Path,default=PROJECT/"outputs/t2")
     p.add_argument("--stage",choices=["prepare-base","baseline","seeds","features","ongoing","median-ongoing","extent","evaluate","prepare-extra","predict","report","all"],default="all")
     p.add_argument("--fold",action="append",choices=list(FOLDS))
