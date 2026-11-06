@@ -1,8 +1,8 @@
 """TrafficFlowBench 2026 (IEEE Big Data Cup), team BizAI: one entry point for both selected finals.
 
   python run.py --final v3 [--data DIR] [--skip-train | --from-components] [--stages a,b,...] [--force]
-    --final v3   cand_combo_v3 (public LB 0.88378, sha256 7ea29080...), final no. 1
-    --final v1   cand_combo_v1 (public LB 0.88327, sha256 d7d0912b...), final no. 2
+    --final v3   cand_combo_v3c (public LB 0.88369, sha256 341a64b3...), final no. 1
+    --final v1   cand_combo_v1c (public LB 0.88317, sha256 15aceedd...), final no. 2
     --data       the unzipped competition release (folder with config/, corridors/, task1/ ... submission_key.csv);
                  default data/kaggle_public
     full run (default): every model is trained from the training split, then predicted and assembled
@@ -180,7 +180,7 @@ def main():
         dst = OUT / f"submission_{a.final}.csv"; shutil.copy2(built, dst); h = sha(dst)
         (OUT / f"submission_{a.final}.sha256").write_text(f"{h}  {dst.name}\n")
         log(f"{dst}: sha256 {h} " + ("== the submitted file" if h == cfg["sha256"] else
-            f"!= the submitted {cfg['sha256'][:8]} (expected unless --from-components: GPU/CPU float rounding; run scripts/verify.py)"))
+            f"!= the submitted {cfg['sha256'][:8]} (expected unless --from-components: GPU members retrained or run on another device; run scripts/verify.py)"))
 
 
 if __name__ == "__main__":

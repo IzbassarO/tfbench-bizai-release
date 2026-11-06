@@ -63,32 +63,54 @@ the pp2 alphas. A run trains the members; it does not repeat that selection.
 `run.py` runs each stage as its own process and records wall time and peak RSS; a finished stage is skipped on the
 next call (resume after a lost session). `--jobs 3` runs the three independent lanes (Task 2 · LightGBM · GPU) at once.
 
-| lane | stage | what | measured (where) | peak RAM |
-|---|---|---|---|---|
-| prep | cache | released csv/parquet → per-panel npz | ~10 min (M1 Pro) | < 4 GB |
-| prep | t4 | Task 4 projection | < 1 min | < 2 GB |
-| t2 | t2_codex | family A v1 dataset, v2 (ongoing member), v4 (onset member) | ~4.5 h together with t2b_base (M1 Pro) | ~4 GB |
-| t2 | t2b_base | t2b windows + noloc members | (in the line above) | |
-| t2 | imputer | clean LightGBM imputer (train rows only), hybrid labels | TBD | |
-| t2 | onset | v4 / noloc on hybrid labels | ~55 min (M1 Pro) | ~5 GB |
-| t2 | ongoing | selector windows + v2l (3 seeds) | TBD | |
-| lgbm | lgbm | LightGBM 8× re-masks, 3 seeds, sequential | 12.3–14.1 h (M1 Pro, 8 threads) | ~18 GB |
-| gpu | mlp | feature export + 3 seeds | 0.5 h training (L4) + export TBD | |
-| gpu | unet | U-Net × 5 seeds | 4.9 h (L4: 3440–3565 s per seed) | |
-| gpu | unet2 | U-Net2 × 3 seeds | 9.9 h (L4: 11 780–12 030 s per seed) | |
-| final | final_<v> | mix, pp2, assembly, format checks | ~1.5 min | ~8 GB |
+Rehearsal from scratch on a fresh clone of this repository: CPU lanes on an Apple M1 Pro (10 cores, 16 GB), GPU lane on
+an NVIDIA A100 40 GB (Colab). Peak RSS is the resident peak of the stage's processes.
 
-A100 40 GB timings of the rehearsal: TBD.
+| lane | stage | what | wall time | peak RSS | machine |
+|---|---|---|---|---|---|
+| prep | cache | released csv/parquet → per-panel npz | 4 min (A100 host: 8 min) | 2.6 GiB | M1 Pro |
+| prep | t4 | Task 4 projection | 3 s | 0.4 GiB | M1 Pro |
+| t2 | t2_codex | family A v1 dataset, v2 (ongoing member), v4 (onset member) | 94 min | 5.5 GiB | M1 Pro |
+| t2 | t2b_base | t2b windows + noloc members | 3 min | 3.6 GiB | M1 Pro |
+| t2 | imputer | clean LightGBM imputer (train rows only), hybrid labels | 14 min | 4.7 GiB | M1 Pro |
+| t2 | onset | v4 / noloc on hybrid labels | ~67 min (over two attempts: labels 65 min, kept across a restart) | ~5 GiB | M1 Pro |
+| t2 | ongoing | selector windows + v2l (3 seeds) | 4 min | 3.4 GiB | M1 Pro |
+| t2 | onset_decode, ongoing_decode | decoders, queue file | 20 s | 2.3 GiB | M1 Pro |
+| lgbm | lgbm | LightGBM 8× re-masks, 3 seeds, sequential | 10.4 h | 7.1 GiB resident (~18 GB footprint in an earlier measurement) | M1 Pro, 8 threads |
+| gpu | mlp | feature export + 3 seeds | 36 min | 6.3 GiB | A100 |
+| gpu | unet | U-Net × 5 seeds | 4.6 h | 7.1 GiB | A100 |
+| gpu | unet2 | U-Net2 × 3 seeds | 6.8 h | 7.9 GiB | A100 |
+| final | final_v3 / final_v1 | mix, pp2, assembly, format checks | 82 s / 91 s | 5.8 / 6.2 GiB | M1 Pro |
+
+Lane totals: Task 2 ≈ 3.0 h, LightGBM 10.4 h, GPU 12.0 h, about 25.5 h one after the other. The three lanes share no
+outputs, so `--jobs 3` takes the time of the longest one on a machine with the cores and RAM of section 2; we ran them on
+two machines, not with `--jobs 3` on one.
 
 ## 5. What is identical and what is not
 
 - `--from-components`: byte-identical to the submitted csv (sha256 checked by `run.py`).
-- Full run and `--skip-train`: the CPU members (LightGBM, Task 2, Task 4) are deterministic for the pinned versions
-  and thread counts; the GPU members (MLP, U-Nets) differ at float-rounding level across GPU types and drivers (the
-  U-Net's CPU vs GPU inference differs by ≤ 0.01 km/h on the same weights). `scripts/verify.py` compares the result with
-  the byte-identical rebuild row by row and bounds the score change without the hidden truth: by the Minkowski
-  inequality |RMSE(a, y) − RMSE(b, y)| ≤ RMSE(a, b) per panel × regime for S_state; a changed queue window moves its IoU
-  by at most 1. It fails if the bound exceeds 1 % of the public score.
+- Full run, CPU members: exact. The rehearsal reproduced the LightGBM member (0 of 6 735 795 cells differ), the queue
+  (0 of 174 000 cells) and the path flows (relative L1 change 0) of the submitted files.
+- Full run, GPU members: retraining on another GPU does not reproduce the weights, so the sha256 of the csv differs
+  (`run.py` says so; this is expected). Rehearsal on the A100 against the shipped members, which were trained on an L4:
+
+  | member | RMSE speed | RMSE flow | correlation | largest single-cell speed change |
+  |---|---|---|---|---|
+  | U-Net × 5 | 0.187 km/h | 7.7 vph | ≥ 0.9998 | 34 km/h |
+  | U-Net2 × 3 | 0.237 km/h | 9.7 vph | ≥ 0.9998 | 35 km/h |
+  | MLP × 3 | 0.323 km/h | 9.7 vph | ≥ 0.9998 | 63 km/h |
+
+- `--skip-train`: uses the shipped weights; the U-Net's CPU vs GPU inference differs by ≤ 0.01 km/h on the same weights.
+
+`scripts/verify.py` compares a result with the byte-identical rebuild row by row and bounds the score change without the
+hidden truth: by the Minkowski inequality |RMSE(a, y) − RMSE(b, y)| ≤ RMSE(a, b) per panel × regime for S_state; a changed
+queue window moves its IoU by at most 1. It fails if the bound exceeds 1 % of the public score. S_physics needs the hidden
+fields and is not part of the bound. Rehearsal result:
+
+| final | queue / path flow | \|ΔS_state\| ≤ (private) | \|ΔS_total\| ≤ (private, without S_physics) | limit 1 % |
+|---|---|---|---|---|
+| v3 | identical | 0.00648 | 0.00227 | 0.0088 |
+| v1 | identical | 0.00421 | 0.00147 | 0.0088 |
 
 ## 6. Task 2 online rule
 

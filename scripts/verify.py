@@ -15,7 +15,7 @@ computable from the two predictions alone:
   odme     relative L1 change of path_flow per panel (S_ODME is a ratio of L1 link-count errors: reported, not bounded)
   physics  not bounded (needs the hidden fields); reported through the state differences it is computed from
 dS_total <= 0.35 dS_state + 0.30 dS_queue (+ the reported odme / physics changes). Exit 1 if the bound exceeds
-1 % of REF's public score (0.88378 v3, 0.88327 v1: 0.0088) or the files differ in rows / keys / format.
+1 % of REF's public score (0.88369 v3, 0.88317 v1: 0.0088) or the files differ in rows / keys / format.
 """
 from __future__ import annotations
 import argparse, sys
@@ -42,7 +42,7 @@ def official_mean(df: pl.DataFrame, val: str, levels: list[str]) -> float:
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("ours", type=Path); ap.add_argument("ref", type=Path)
-    ap.add_argument("--data", type=Path, default=ROOT / "data" / "kaggle_public"); ap.add_argument("--public", type=float, default=0.88378)
+    ap.add_argument("--data", type=Path, default=ROOT / "data" / "kaggle_public"); ap.add_argument("--public", type=float, default=0.88369)
     a = ap.parse_args()
     A, B = read(a.ours), read(a.ref)
     if A.columns != COLS or B.columns != COLS or A.height != B.height or not (A["submission_id"] == B["submission_id"]).all() \
