@@ -1,6 +1,6 @@
 """Average several state submissions (same template order) -> outputs/t1/state_submission_ens.csv (or -o <path>)
 usage: python -m tfb.t1.blend [-o out.csv] outputs/t1/state_submission.csv outputs/t1/state_submission_seed7.csv ...
-       weighted: path@w (e.g. ens_v6t1s3.csv@0.65 ens_v5t1.csv@0.35; weights must sum to 1); no '@' = plain mean as before
+       weighted: path@w (weights must sum to 1); no '@' = plain mean
 """
 import json, sys
 from pathlib import Path

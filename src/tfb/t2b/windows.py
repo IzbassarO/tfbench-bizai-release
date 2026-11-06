@@ -1,11 +1,10 @@
-"""LB-like Task 2 window selector on train (organizer policy as published + family A's replication audit).
+"""Release-like Task 2 window selector on train (published organizer policy).
 
 Chronological scan from a block start; history T-60..T-5; ongoing iff the history holds
->=2 queued obs on one link, onset iff it holds none (single scattered obs = onset by
-contract, but never occur in released windows); coverage >= .7 eligible history cells;
+>=2 queued obs on one link, onset iff it holds none; coverage >= .7 eligible history cells;
 a queue somewhere in T+5..T+30; persistence (state at T-5) eligible IoU <= .9; one shared
 360-min clock; 5 windows per condition. Val/private windows sit in the first days of their
-month, so a block starting on day 1 of a month is the LB-like sample.
+month, so a block starting on day 1 of a month is the release-like sample.
 """
 from __future__ import annotations
 import numpy as np
@@ -66,24 +65,3 @@ def scan(cand: pd.DataFrame, start: int, stop: int, quota: int = 5, spacing: int
     out = cand.loc[keep].copy()
     out["condition"] = out.condition.replace({"queue_onset_dirty": "queue_onset"})
     return out
-
-
-def lb_like(lab: np.ndarray, elig: np.ndarray, dates: np.ndarray, starts=(1, 8, 15, 22)) -> pd.DataFrame:
-    """Scan blocks starting on given days of every month; block = start .. next start (or month end)."""
-    cand = candidates(lab, elig)
-    dts = pd.to_datetime(pd.Series(dates))
-    out = []
-    for (y, m), g in dts.groupby([dts.dt.year, dts.dt.month]):
-        days = g.dt.day.to_numpy(); idx = g.index.to_numpy()
-        for k, s in enumerate(starts):
-            if s not in days:
-                continue
-            i0 = idx[days == s][0]
-            nxt = [d for d in starts[k + 1:] if d in days]
-            i1 = idx[days == nxt[0]][0] if nxt else idx[-1] + 1
-            w = scan(cand, i0 * DAY, i1 * DAY)
-            w["block"] = f"{y}-{m:02d}-{s:02d}"; w["month"] = f"{y}-{m:02d}"; w["block_day"] = s
-            out.append(w)
-    w = pd.concat(out, ignore_index=True)
-    w["date"] = [dates[t // DAY] for t in w.t]
-    return w

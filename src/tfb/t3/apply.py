@@ -1,13 +1,13 @@
-"""Apply a per-cell physics post-processing setting (a tfb.t3.grid name, fd_* only) to a validation+private state file.
+"""Apply the pp2 physics post-processing to a validation+private state file.
 
 usage: python -m tfb.t3.apply <in_state.csv> <out_state.csv> <setting, e.g. fd_v_a0.5> [skip_panel,skip_panel] [alphas.json]
-alphas.json (tfb.t3.tune_pp choice): {panel: {"free": a, "cong": a}} overrides the setting's alpha per panel, separately for
-free and congested (v < 0.6 v_f) cells; panels not in it use the setting's alpha.
+alphas.json: {panel: {"free": a, "cong": a}} overrides the setting's alpha per panel, separately for free and congested
+(v < 0.6 v_f) cells; panels not in it use the setting's alpha.
 Only template target cells exist in the file, so only they change; rows/keys/order are preserved (write_state).
-Values are per link (stations on one link share a prediction), as everywhere in tfb.t1.
+Values are per link (stations on one link share a prediction).
 """
 from __future__ import annotations
-import json, sys
+import json
 from pathlib import Path
 import numpy as np
 from .. import cache
@@ -32,7 +32,3 @@ def main(src, dst, setting, skip="", alphas=""):
         preds[(panel, split)] = (s2, f2)
     write_state(preds, Path(dst), meta={"post": setting, "skip_panels": skip, "alphas": per, "input": str(src)})
     print(f"wrote {dst}; target cells changed {changed}")
-
-
-if __name__ == "__main__":
-    main(*sys.argv[1:6])

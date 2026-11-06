@@ -1,6 +1,5 @@
-"""Task 2 v2: two temporal gates, disjoint calibration, frozen v1 output.
-
-All artifacts are isolated under outputs/t2/v2. Nothing is submitted.
+"""Family A v2: candidate variants fitted per temporal fold, decoder calibrated on disjoint months, one member per panel
+and condition chosen by two temporal gates. Artifacts under outputs/t2/v2.
 """
 from __future__ import annotations
 
@@ -91,7 +90,7 @@ def fit_group(args, fold, condition, variant):
         [("median", False, 42)] if median else [("full", False, 42), ("no_location", True, 42)])
     result = []
     for member, no_location, seed in members:
-        # Frozen v1 Jan-Feb/final models already exist and must stay untouched.
+        # The v1 Jan-Feb/final models already exist and are reused.
         old = args.output / "models" / FOLDS[fold] / f"{condition}_{member}.txt"
         path = args.output / "v2" / "models" / fold / variant / f"{condition}_{member}.txt"
         signature=dict(fold=fold,condition=condition,variant=variant,seed=seed,rounds=args.rounds,
@@ -115,7 +114,7 @@ def fit_group(args, fold, condition, variant):
             raise ValueError(f"Cached model feature schema mismatch: {path}")
         if int(model.booster.params.get("seed",-1))!=seed or model.booster.current_iteration()!=args.rounds:
             raise ValueError(f"Cached model parameters mismatch: {path}")
-        # V1 model files remain untouched; provenance for their reuse is local.
+        # Provenance of the reused v1 models is recorded locally.
         dump_json(signature_path,signature)
         result.append(model)
     del x, y, w
@@ -154,7 +153,7 @@ def _read_probability(args, fold, panel, condition, variant):
     path = args.output / "v2" / "probabilities" / fold / f"{panel}_{condition}_{variant}.npz"
     with np.load(path) as d:
         meta = _meta(args, fold, panel, condition)
-        # Legacy cached probabilities without identifiers are unsafe to align.
+        # Cached probabilities without identifiers cannot be aligned.
         if "origin" not in d or not np.array_equal(d["origin"], meta.origin.to_numpy(dtype=str)):
             raise ValueError(f"Probability/metadata origin mismatch: {path}")
         if not np.array_equal(d["window_id"], meta.window_id.to_numpy(dtype=str)):
@@ -162,7 +161,7 @@ def _read_probability(args, fold, panel, condition, variant):
         validate_probability_pack(d["probability"],d["truth"],d["eligible"],meta,d["origin"],d["window_id"])
         with np.load(args.output/"datasets"/FOLDS[fold]/f"{panel}_{condition}.npz") as base:
             if not np.array_equal(d["truth"],base["eval_y"]) or not np.array_equal(d["eligible"],base["eval_eligible"]):
-                raise ValueError(f"Probability targets differ from frozen fold cohort: {path}")
+                raise ValueError(f"Probability targets differ from the fold cohort: {path}")
         return d["probability"], d["truth"], d["eligible"]
 
 
@@ -302,7 +301,7 @@ def nonempty_scores(args,primary):
 
 
 def assert_complete(args):
-    """Do not publish a full comparison after silently skipping a failed fit."""
+    """Fail if any fit is missing."""
     missing=[]
     for fold in ("sep","octnov","dec","janfeb"):
         base=args.output/"v2/probabilities"/fold
@@ -313,7 +312,7 @@ def assert_complete(args):
                 missing.extend(str(base/f"{panel}_{condition}_{v}.npz") for v in variants
                                if not (base/f"{panel}_{condition}_{v}.npz").exists())
             if not (base/f"{panel}_extent.npz").exists():missing.append(str(base/f"{panel}_extent.npz"))
-    if missing:raise ValueError("Incomplete v2 experiments; missing: "+", ".join(missing))
+    if missing:raise ValueError("Incomplete v2 fits; missing: "+", ".join(missing))
 
 
 def choose_gated(args,scores,nonempty=None):
@@ -391,50 +390,34 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument("--root",type=Path,default=RELEASE_ROOT)
     p.add_argument("--output",type=Path,default=PROJECT/"outputs/t2")
-    p.add_argument("--stage",choices=["prepare-base","baseline","seeds","features","ongoing","median-ongoing","extent","evaluate","prepare-extra","predict","report","all"],default="all")
-    p.add_argument("--fold",action="append",choices=list(FOLDS))
-    p.add_argument("--feature-variant",choices=["all","features","robust"],default="all")
     p.add_argument("--rounds",type=int,default=350);p.add_argument("--threads",type=int,default=2)
     args=p.parse_args(); args.root=resolve_root(args.root);args.panels=panel_names(args.root)
     frozen=args.output/"queue_submission_v1.csv"
     if not frozen.exists():shutil.copy2(args.output/"queue_submission.csv",frozen)
     if frozen.read_bytes()!=(args.output/"queue_submission.csv").read_bytes():
-        raise ValueError("Frozen v1 and current queue_submission.csv differ; refusing to overwrite either")
-    folds=args.fold or ["sep","octnov","dec","janfeb"]
-    if args.stage in {"prepare-base","all"}:
-        for fold in folds:prepare_base(args,fold)
-    if args.stage in {"prepare-extra","all"}:
-        from .v2_data import prepare_extra
-        for fold in folds: prepare_extra(args,fold)
+        raise ValueError("queue_submission_v1.csv and queue_submission.csv differ; refusing to overwrite either")
+    folds=["sep","octnov","dec","janfeb"]
+    from .v2_data import prepare_extra
+    for fold in folds:prepare_base(args,fold)
+    for fold in folds: prepare_extra(args,fold)
     for fold in folds:
-        if fold=="final": continue
-        if args.stage in {"baseline","all"}:
-            for condition in CONDITIONS: predict_fold(args,fold,condition,"baseline")
-        if args.stage in {"seeds","all"}: predict_fold(args,fold,"queue_onset","seed5")
-        if args.stage in {"features","all"}:
-            if args.feature_variant!="robust":
-                for condition in CONDITIONS: predict_fold(args,fold,condition,"features")
-            if args.feature_variant!="features":predict_fold(args,fold,"queue_onset","robust")
-        if args.stage in {"ongoing","all"}:
-            for variant in ("incident","augmented"):predict_fold(args,fold,"queue_ongoing",variant)
-        if args.stage in {"median-ongoing","all"}:predict_fold(args,fold,"queue_ongoing","median_v1")
-        if args.stage in {"extent","all"}:predict_extent(args,fold)
-    if args.stage in {"evaluate","all"}:
-        assert_complete(args)
-        evaluate(args)
-    if args.stage in {"predict","all"}:
-        from .v2_predict import predict_v2
-        predict_v2(args)
-    if args.stage in {"report","all"}:
-        from .v2_predict import write_report
-        write_report(args)
+        for condition in CONDITIONS: predict_fold(args,fold,condition,"baseline")
+        predict_fold(args,fold,"queue_onset","seed5")
+        for condition in CONDITIONS: predict_fold(args,fold,condition,"features")
+        predict_fold(args,fold,"queue_onset","robust")
+        for variant in ("incident","augmented"):predict_fold(args,fold,"queue_ongoing",variant)
+        predict_fold(args,fold,"queue_ongoing","median_v1")
+        predict_extent(args,fold)
+    assert_complete(args)
+    evaluate(args)
+    from .v2_predict import predict_v2
+    predict_v2(args)
     source=Path(__file__).parent
-    metadata=dict(stage=args.stage,folds=folds,seconds=time.perf_counter()-started,
+    metadata=dict(folds=folds,seconds=time.perf_counter()-started,
         seeds=list(SEEDS),threads=args.threads,rounds=args.rounds,python=platform.python_version(),
         versions={name:version(name) for name in ("numpy","pandas","pyarrow","lightgbm","scipy")},
-        source_sha256={path.name:hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(source.glob("*.py"))},
-        frozen_v1_sha256=hashlib.sha256(frozen.read_bytes()).hexdigest(),submitted=False)
-    dump_json(args.output/"v2"/f"run_{args.stage}.json",metadata)
+        source_sha256={path.name:hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(source.glob("*.py"))})
+    dump_json(args.output/"v2"/"run_all.json",metadata)
 
 
 if __name__=="__main__":main()

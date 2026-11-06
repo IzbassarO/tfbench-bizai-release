@@ -1,6 +1,5 @@
-"""Small causal extension for early slowdowns and nearby bottlenecks.
+"""Causal features for early slowdowns and nearby bottlenecks.
 
-This module deliberately leaves the original feature schema untouched.
 Output rows are links in upstream-to-downstream order; callers may repeat
 them across the six forecast horizons. Distances to a slow link are positive
 when that link is downstream of the target link, negative when upstream.

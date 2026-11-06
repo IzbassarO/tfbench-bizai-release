@@ -1,11 +1,9 @@
 """Deterministic Task 2 proxy-window reconstruction from train observations.
 
-The public organizer release contains the policy and scorer, but does not ship
-its selector implementation or hidden underlying queue labels.  This module
-implements its published constraints and the chronological scan responsible
-for the public onset artifact; it does not claim bitwise organizer replication.
-In particular, truncation to five earliest windows is explicit, rather than an
-invented organizer random-sampling rule.
+The organizer release contains the policy and scorer, but not its selector
+implementation or the hidden underlying queue labels.  This module implements
+the published constraints and a chronological scan; truncation to the five
+earliest windows is explicit.
 """
 from __future__ import annotations
 
@@ -52,7 +50,7 @@ def select_windows(
     has an independent spacing clock by default. Persistence IoU is measured only on
     eligible target cells and candidates above .9 are rejected.
 
-    ``history_includes_origin=False`` reproduces the public baseline's legacy
+    ``history_includes_origin=False`` reproduces the public baseline's
     T-60..T-5 history, condition at T-5, and persistence at T-5.  The row at T is
     allowed as a feature in either mode.  Eligibility controls coverage and
     persistence scoring, not the existence of a queue in an observed state.
@@ -60,8 +58,7 @@ def select_windows(
 
     ``condition_policy='contract'`` instead uses the downloaded competition
     contract: ongoing means at least two queued history observations on one
-    link; onset means no such established queue.  This differs materially from
-    the README and supplied strict recap.  It does not require a queue at the
+    link; onset means no such established queue.  It does not require a queue at the
     last history slot, and an isolated noisy history queue can remain onset.
 
     ``spacing_policy='shared'`` uses one chronological spacing clock for both

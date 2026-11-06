@@ -1,17 +1,7 @@
-"""Task 1 third member: 2D U-Net on the time x link grid (see report, Sec. III-A).
+"""Task 1 member: 2D U-Net on the time x link grid.
 
-Producer for the all-in queue (`tfb.t1.unet:run`, src/tfb/allin/README.md):
-  gate : 3 seeds x {last30, autumn}; blend (1-b)/2 LGBM + (1-b)/2 MLP random_12 + b U-Net -> pp2.
-         b is fitted on one holdout and scored on the other, vs the allin reference (tfb.allin.baseline).
-         tfb.t1.unet_seeds reuses this with more seeds and another b grid.
-  final: 3 seeds on all train days (+ validation/private observed cells as transductive
-         re-mask targets) -> state_raw.csv with the gate's b.
-Inputs are only the released masked layer, train-truth profiles (holdout days excluded)
-and eligible ramps. Weights, train seconds (device) and CPU inference seconds from the
-saved weights are kept in <checkpoint>/runs/<hold>/seed<S>/.
-
-Mac smoke (one small panel, minutes, <2 GB):
-  PYTHONPATH=src .venv/bin/python -m tfb.t1.unet
+Fitted on all train days plus validation/private observed cells as transductive re-mask targets. Inputs are only the
+released masked layer, train-truth profiles and eligible ramps. Weights and train seconds are kept per seed in the run dir.
 """
 from __future__ import annotations
 import os
@@ -21,20 +11,18 @@ import json
 from functools import lru_cache
 import platform
 import time
-from pathlib import Path
 import numpy as np
 import torch
 from torch import nn
 from tfb import cache, io
 from tfb.t1.base import day_mask, fit_profiles, slot_of, write_state
-from tfb.t1.train import SPEED_CAP, holdout_days
+from tfb.t1.train import SPEED_CAP
 from tfb.t2b import data as T2
 from tfb.t1.mlp_colab.runner import atomic_json, atomic_torch, seed_all
 
 DEFAULTS = dict(epochs=30, batch=8, width=32, lr=2e-3, weight_decay=1e-4, panels=None, steps=None)
 WIN, CTX = 432, 72                  # 1.5-day window; predictions keep the central day
 S_S, S_F = 8.0, 100.0               # residual scales: speed km/h, flow vph per lane
-B_GRID = (0.15, 0.25, 0.33)         # U-Net blend weight grid (report 08 §3)
 STEP = io.STEPS_PER_DAY
 
 
@@ -178,7 +166,7 @@ def fit(panels, cfg, seed, device, directory, beat):
         state["epoch"] = epoch + 1
         atomic_torch(resume, dict(net=net.state_dict(), opt=opt.state_dict(), sch=sch.state_dict(), state=state))
         print(f"unet seed{seed} epoch {epoch + 1}/{cfg['epochs']} loss {total / steps:.4f} ({state['history'][-1]['seconds']:.0f}s)", flush=True)
-        beat(dict(unet=str(directory), **state["history"][-1]))   # may pause the worker; checkpoint is durable
+        beat(dict(unet=str(directory), **state["history"][-1])) 
     return net, state
 
 
@@ -200,9 +188,9 @@ def predict(net, d, days, device, bs=8, win=WIN, ctx=CTX):
     return sp.astype(np.float32), fl.astype(np.float32)
 
 
-@lru_cache(maxsize=1)   # the three seeds of one holdout share the loaded arrays
+@lru_cache(maxsize=1)   # the seeds share the loaded arrays
 def load_all(hold, names):
-    days = None if hold == "final" else holdout_days(hold)
+    days = None
     panels, jobs = [], []
     for panel in names:
         pn = cache.load(panel, "train")
@@ -216,13 +204,13 @@ def load_all(hold, names):
 
 
 def train_run(hold, cfg, seed, device, root, beat):
-    """One seed on one holdout ('final' = all train days + validation/private transductive). Predictions per
+    """One seed ('final' = all train days + validation/private transductive). Predictions per
     (panel, split) as full [T,L] arrays in <root>/pred/; weights + timings in <root>."""
     done = root / "done.json"
     if done.exists(): return json.loads(done.read_text())
     win, ctx = cfg.get("win", WIN), cfg.get("ctx", CTX)   # optional cfg keys: window length / leading context (steps)
     if win % 8 or not 0 <= ctx <= win - STEP: raise ValueError(f"U-Net window {win}/{ctx}: win % 8 == 0, ctx + 288 <= win")
-    days = None if hold == "final" else holdout_days(hold)
+    days = None
     panels, jobs = load_all(hold, tuple(cfg["panels"] or io.panels()))
     net, state = fit(panels, cfg, seed, device, root, beat)
     torch.save(dict(net=net.state_dict(), cfg=cfg, c_in=C_IN, seed=seed, hold=hold), root / "weights.pt")
@@ -236,7 +224,7 @@ def train_run(hold, cfg, seed, device, root, beat):
     record = dict(hold=hold, seed=seed, cfg=cfg, epochs=state["epoch"], history=state["history"],
                   train_seconds=state["train_seconds"], train_device=device_name(device), infer_seconds_device=infer,
                   torch=torch.__version__, weights=str(root / "weights.pt"))
-    if seed == 42:   # inference from the saved weights on CPU (timing for the report) + agreement with the device run
+    if seed == 42:   # inference from the saved weights on CPU + agreement with the device run
         cpu = UNet(C_IN, cfg["width"]); cpu.load_state_dict(torch.load(root / "weights.pt", map_location="cpu")["net"])
         t0 = time.perf_counter(); diff = 0.0
         for i, split in jobs:
@@ -256,42 +244,12 @@ def device_name(device):
     return torch.cuda.get_device_name() if device.type == "cuda" else platform.processor() or platform.machine()
 
 
-# ---------------------------------------------------------------- gate / final (allin producer)
-def holdout_dirs(bundle, hold, run_roots, dest):
-    """Seed-mean U-Net at the bundle's target cells, in the scorer's npz format (row/col/sp/fl)."""
-    manifest = json.loads((bundle / "manifest.json").read_text())
-    dest.mkdir(parents=True, exist_ok=True)
-    for panel in manifest["holdouts"][hold]["panels"]:
-        with np.load(bundle / hold / "score" / f"{panel}.npz") as c:
-            rows, tr, tc = c["rows"], c["target_row"], c["target_col"]
-        sp = fl = 0
-        for r in run_roots:
-            with np.load(r / "pred" / f"{panel}_train.npz") as z:
-                sp = sp + z["sp"][tr, tc] / len(run_roots); fl = fl + z["fl"][tr, tc] / len(run_roots)
-        np.savez_compressed(dest / f"{panel}.npz", row=rows[tr], col=tc, sp=sp.astype(np.float32), fl=fl.astype(np.float32))
-    return dest
-
-
-def mix(lgb, mlp, unet, b):
-    """Scorer input P with 0.5 lgb + 0.5 P = (1-b)/2 lgb + (1-b)/2 mlp + b unet (scoring.evaluate fixes 0.5 LGBM)."""
-    return ((1 - b) * mlp + 2 * b * unet - b * lgb).astype(np.float32)
-
-
-def blend_dir(bundle, hold, mlp_dir, unet_dir, b, dest):
-    manifest = json.loads((bundle / "manifest.json").read_text())
-    dest.mkdir(parents=True, exist_ok=True)
-    for panel in manifest["holdouts"][hold]["panels"]:
-        with np.load(bundle / hold / "score" / f"{panel}.npz") as c, np.load(mlp_dir / f"{panel}.npz") as m, \
-             np.load(unet_dir / f"{panel}.npz") as u:
-            tr, tc = c["target_row"], c["target_col"]
-            np.savez_compressed(dest / f"{panel}.npz", row=m["row"], col=m["col"],
-                                sp=mix(c["lgb_sp"][tr, tc], m["sp"], u["sp"], b), fl=mix(c["lgb_fl"][tr, tc], m["fl"], u["fl"], b))
-    return dest
+# ---------------------------------------------------------------- final
 
 
 def final_component(cfg, device, runs, component, beat=lambda *a, **k: None):
     """Train (or reuse) each (seed, dir) on all train days + validation/private re-mask targets; the seed mean of the
-    validation/private predictions -> component csv (template order). Also scripts/reproduce.sh stage 7."""
+    validation/private predictions -> component csv (template order)."""
     records = {str(s): train_run("final", cfg, s, device, r, beat) for s, r in runs}
     preds = {}
     for panel in cfg["panels"] or io.panels():
@@ -300,28 +258,3 @@ def final_component(cfg, device, runs, component, beat=lambda *a, **k: None):
             preds[panel, split] = (np.mean([z["sp"] for z in arrays], 0), np.mean([z["fl"] for z in arrays], 0))
     write_state(preds, component, meta=dict(model="U-Net", seeds=[s for s, _ in runs], cfg=cfg))
     return records
-
-
-# ---------------------------------------------------------------- Mac smoke
-def smoke():
-    """One small panel, last30, a few steps: shapes, finiteness, resume, CPU timing, blend algebra."""
-    import shutil
-    from tfb.eval.score_t1 import score_arrays
-    rng = np.random.default_rng(0); lgb, mlp, un = rng.random((3, 5)) * 100
-    for b in B_GRID:
-        assert np.allclose(0.5 * lgb + 0.5 * mix(lgb, mlp, un, b), (1 - b) / 2 * lgb + (1 - b) / 2 * mlp + b * un, atol=1e-3)
-    root = io.PROJECT / "outputs/_scratch/t1_unet"; shutil.rmtree(root, ignore_errors=True)
-    cfg = dict(DEFAULTS, panels=["D12_I405_S"], epochs=2, steps=6, batch=4, width=16)
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    rec = train_run("last30", cfg, 42, dev, root / "s42", lambda *a, **k: None)
-    pn = cache.load("D12_I405_S", "train"); days = holdout_days("last30"); rows = day_mask(pn, days)
-    with np.load(root / "s42" / "pred" / "D12_I405_S_train.npz") as z:
-        sp, fl = pn.speed.copy(), pn.flow.copy(); sp[rows], fl[rows] = z["sp"], z["fl"]
-    S = score_arrays(pn, sp, fl, rows[:, None]); print(S)
-    assert np.isfinite(S.S_state).all() and rec["cpu_vs_device_maxabs"] < 1e-2
-    print({k: rec[k] for k in ("train_seconds", "infer_seconds_device", "infer_seconds_cpu", "cpu_vs_device_maxabs")})
-    shutil.rmtree(root)
-
-
-if __name__ == "__main__":
-    smoke()

@@ -31,7 +31,7 @@ validation **and** private), its `.sha256`, `outputs/run.log` and `outputs/run_l
 Ablations, the local-vs-public transfer of every step and the Task 2 rule audit: `docs/ABLATIONS.md`.
 
 Constants that were chosen on our train-split holdouts (last 30 days, autumn) are **pinned** in `configs/finals.yaml`
-and `configs/alphas_v3.json` / `reports/physics_alphas_pp2.json`: the regime weights, the U-Net2 share c = 0.5 and
+and `configs/alphas_v3.json` / `configs/physics_alphas_pp2.json`: the regime weights, the U-Net2 share c = 0.5 and
 the pp2 alphas. A run trains the members; it does not repeat that selection.
 
 ## 2. Environment

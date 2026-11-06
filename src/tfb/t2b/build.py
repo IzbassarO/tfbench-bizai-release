@@ -1,4 +1,4 @@
-"""Window tensors for train CV (LB-like selector) and for released validation/private windows.
+"""Window tensors for the train windows (release-like selector) and for released validation/private windows.
 
 Per window: S/Q [13, L] speed/flow at T-60..T (12 raw history slots + the masked row at T,
 exactly what a released window provides), RON/ROFF [13, L] ramp flows, and for train the
@@ -8,20 +8,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from . import data, windows as W
-from .. import io
 
 DAY = 288
-
-
-def med3(sp: np.ndarray) -> np.ndarray:
-    """NaN-aware centred 3-slot temporal median within day (denoised-label proxy)."""
-    a = np.stack([np.roll(sp, 1, 0), sp, np.roll(sp, -1, 0)])
-    a[0, ::DAY] = np.nan; a[2, DAY - 1::DAY] = np.nan
-    with np.errstate(all="ignore"):
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            return np.nanmedian(a, 0)
 
 
 def den_labels(sp: np.ndarray, vcut: np.ndarray, band: float = 4.0) -> np.ndarray:
@@ -52,17 +40,14 @@ def _pack(d, ts, hs=None, hf=None):
     return S, Q, RON, ROFF
 
 
-def train_windows(panel: str, starts=(1, 8, 15, 22), n_extra_ongoing: int = 400, lab_speed=None,
-                  train_cells: str = "finite", select_speed=None, d=None) -> dict:
-    """lab_speed: alternative [T, L] label speed (e.g. hybrid-filled truth) for window selection and targets;
-    training cells E = every finite label cell (train_cells="finite") or eligible only ("elig"); select_speed
-    overrides the speed used for window selection (default: the label speed). Inputs stay raw.
-    d: panel arrays to use instead of the train split (tfb.t2b.march_refit: a released month's masked layer)."""
-    d = data.load(panel, "train") if d is None else d; ls = d["speed"] if lab_speed is None else lab_speed
-    sel = W.ffill_day(ls if select_speed is None else select_speed)
+def train_windows(panel: str, starts=(1, 8, 15, 22), n_extra_ongoing: int = 400, lab_speed=None) -> dict:
+    """lab_speed: alternative [T, L] label speed (hybrid labels) for window selection and targets; training cells E = every
+    finite label cell. Inputs stay raw."""
+    d = data.load(panel, "train"); ls = d["speed"] if lab_speed is None else lab_speed
+    sel = W.ffill_day(ls)
     lab = np.nan_to_num(sel, nan=999) <= d["vcut"]
     cand = W.candidates(lab, d["elig"])
-    cand_all = W.candidates(lab, np.ones_like(d["elig"]))  # all-cell persistence (69/80 replication)
+    cand_all = W.candidates(lab, np.ones_like(d["elig"]))  # all-cell persistence
     cand["pers_iou"] = cand_all.pers_iou.to_numpy()
     wins = []
     dts = pd.to_datetime(pd.Series(d["dates"]))
@@ -92,21 +77,9 @@ def train_windows(panel: str, starts=(1, 8, 15, 22), n_extra_ongoing: int = 400,
     raw = np.nan_to_num(ls, nan=999) <= d["vcut"]
     den = den_labels(ls, d["vcut"])
     Y = np.stack([raw[t + 1:t + 7] for t in ts]); YD = np.stack([den[t + 1:t + 7] for t in ts])
-    el = d["elig"] if lab_speed is None or train_cells == "elig" else np.isfinite(ls)
+    el = d["elig"] if lab_speed is None else np.isfinite(ls)
     E = np.stack([el[t + 1:t + 7] for t in ts])
     return dict(meta=w, S=S, Q=Q, RON=RON, ROFF=ROFF, Y=Y, YD=YD, E=E)
-
-
-def train_at(panel: str, origins: list[str]) -> dict:
-    """Train windows at given origin strings 'YYYY-MM-DDTHH:MM' (e.g. family A's CV windows)."""
-    d = data.load(panel, "train")
-    ts = np.array([data.t_index(d, o) for o in origins])
-    S, Q, RON, ROFF = _pack(d, ts)
-    raw = np.nan_to_num(d["speed"], nan=999) <= d["vcut"]
-    den = den_labels(d["speed"], d["vcut"])
-    meta = pd.DataFrame({"t": ts, "date": [d["dates"][t // DAY] for t in ts], "panel": panel})
-    return dict(meta=meta, S=S, Q=Q, RON=RON, ROFF=ROFF, Y=np.stack([raw[t + 1:t + 7] for t in ts]),
-                YD=np.stack([den[t + 1:t + 7] for t in ts]), E=np.stack([d["elig"][t + 1:t + 7] for t in ts]))
 
 
 def released(panel: str, split: str) -> dict:

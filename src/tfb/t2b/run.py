@@ -1,9 +1,8 @@
-"""One-command rebuild of the t2b physics queue model.
+"""Family B physics queue model.
 
-  python -m tfb.t2b.run [--stage windows|cv|final|all]
+  python -m tfb.t2b.run --stage windows|final
 
-windows: LB-like train windows -> outputs/t2b/cache/
-cv:      both temporal folds (+ family A's official-like windows) -> outputs/t2b/cv/*.pkl
+windows: release-like train windows -> outputs/t2b/cache/
 final:   fit on all train months, predict released validation+private windows, write
          outputs/t2b/queue_submission_t2b.csv (+ ensemble with family A) and verify coverage.
 """
@@ -12,18 +11,15 @@ import argparse, json, pickle, time
 import numpy as np
 import pandas as pd
 from .. import io
-from . import build, codex, cv, evaluate as ev, model as M, tm
+from . import build, codex, cv, evaluate as ev, model as M
 
 OUT = io.OUTPUTS / "t2b"
 ALL_MONTHS = ["2030-06", "2030-07", "2030-08", "2030-09", "2030-10", "2030-11", "2030-12", "2031-01", "2031-02"]
 CONFIG = dict(variants={"full": (), "noloc": M.LOC}, blend={"full": 0.5, "noloc": 0.5}, seeds=(42, 7, 2031),
-              # family A binary weight in the ensemble per condition (CV gate on family A's windows, both folds)
+              # family A binary weight in the ensemble per condition
               ens_codex_weight={"queue_onset": 0.4, "queue_ongoing": 1.0},
               train_extra={"queue_onset": True, "queue_ongoing": False},
               codex_file=io.OUTPUTS / "t2" / "queue_submission_v2.csv")
-
-
-SUFFIX = {"": ""}  # output suffix for the prior mode (--tm)
 
 
 def log(s):
@@ -37,16 +33,6 @@ def stage_windows():
         b["meta"].to_parquet(OUT / "cache" / f"{p}_train_meta.parquet")
         np.savez_compressed(OUT / "cache" / f"{p}_train.npz", **{k: v for k, v in b.items() if k != "meta"})
         log(f"windows {p}: {len(b['meta'])}")
-
-
-def stage_cv(tag=""):
-    (OUT / "cv").mkdir(parents=True, exist_ok=True)
-    for fold in cv.FOLDS:
-        extra = {f"{p}@codex": codex.windows(fold, p) for p in io.T2_PANELS}
-        probs, _ = cv.run_fold(fold, variants=CONFIG["variants"], seeds=CONFIG["seeds"], log=log, extra=extra,
-                               train_extra=CONFIG["train_extra"])  # dict per condition
-        cx = {k: {f: B[f] for f in ("Y", "YD", "E", "meta", "codex")} for k, B in extra.items()}
-        pickle.dump({"probs": probs, "codex": cx}, open(OUT / "cv" / f"probs_{fold}{tag}{SUFFIX['']}.pkl", "wb"))
 
 
 def blend(P: dict, w: dict) -> np.ndarray:
@@ -70,14 +56,12 @@ def stage_final():
             for (p, s), R in rel.items():
                 mk = (R["meta"].condition == cond).to_numpy()
                 pr = M.priors(p, cv._days(None, ALL_MONTHS))
-                if cv.TM["mode"]:
-                    pr = tm.window_priors(p, s, R["meta"].t.to_numpy()[mk], pr, cv.TM["mode"])
                 sub = {k: R[k][mk] for k in ("S", "Q", "RON", "ROFF")}
                 X, _, idx = M.panel_rows(sub, Bs[p]["net"], R["meta"][mk], pr, cond)
                 prob = np.mean([M.predict(m, X) for m in ms], 0)
                 G = P.setdefault((p, s), {}).setdefault(vname, np.zeros((len(mk), 6, len(Bs[p]["net"]["v_f"]))))
                 G[mk] = M.to_grid(prob, idx, mk.sum(), G.shape[-1])
-    pickle.dump(P, open(OUT / f"final_probs{SUFFIX['']}.pkl", "wb"))
+    pickle.dump(P, open(OUT / "final_probs.pkl", "wb"))
     write(P, rel)
 
 
@@ -96,10 +80,10 @@ def write(P, rel):
             outs[name].append(to_rows(D, p, s, wi))
     for name, parts in outs.items():
         df = pd.concat(parts, ignore_index=True)
-        f = OUT / f"queue_submission_{name}{SUFFIX['']}.csv"
+        f = OUT / f"queue_submission_{name}.csv"
         df.to_csv(f, index=False)
         log(f"wrote {f.name}: {len(df):,} rows, positives {int(df.queue_pred.sum()):,}")
-    json.dump(verify(), open(OUT / f"submission_verification{SUFFIX['']}.json", "w"), indent=1)
+    json.dump(verify(), open(OUT / "submission_verification.json", "w"), indent=1)
 
 
 def to_rows(D, panel, split, wi):
@@ -125,7 +109,7 @@ def verify(files=None) -> dict:
     kset = set(zip(keys.window_id, keys.timestamp, keys.link_id))
     skset = set(zip(sk["window_id"].to_list(), sk["timestamp"].to_list(), sk["link_id"].to_list()))
     res = {"template_rows": len(keys), "submission_key_queue_rows": sk.height, "key_sets_equal": kset == skset}
-    for f in files or (f"queue_submission_t2b{SUFFIX['']}.csv", f"queue_submission_ens{SUFFIX['']}.csv"):
+    for f in files or ("queue_submission_t2b.csv", "queue_submission_ens.csv"):
         df = pd.read_csv(OUT / f, dtype={"window_id": str, "timestamp": str, "link_id": str})
         s = set(zip(df.window_id, df.timestamp, df.link_id))
         res[f] = {"rows": len(df), "unique": len(s) == len(df), "equals_templates": s == kset,
@@ -137,14 +121,5 @@ def verify(files=None) -> dict:
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(); ap.add_argument("--stage", default="all")
-    ap.add_argument("--tag", default=""); ap.add_argument("--no-extra", action="store_true")
-    ap.add_argument("--tm", choices=["days", "sameday", "days_ph"], default=None,
-                    help="test-month priors from the split's masked data before T (rule-ambiguous, see see report, Sec. VI)")
-    a = ap.parse_args()
-    if a.tm:
-        cv.TM["mode"] = a.tm; SUFFIX[""] = {"days": "_tm", "sameday": "_tm_sameday", "days_ph": "_tm_ph"}[a.tm]
-    if a.no_extra:
-        CONFIG["train_extra"] = {c: False for c in CONFIG["train_extra"]}
-    for st in (["windows", "cv", "final"] if a.stage == "all" else [a.stage]):
-        globals()[f"stage_{st}"](**({"tag": a.tag} if st == "cv" else {}))
+    ap = argparse.ArgumentParser(); ap.add_argument("--stage", choices=["windows", "final"], required=True)
+    {"windows": stage_windows, "final": stage_final}[ap.parse_args().stage]()

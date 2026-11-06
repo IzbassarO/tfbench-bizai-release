@@ -1,6 +1,6 @@
 """Append causal features and training-only counterfactual queue translations.
 
-Base feature values/row sampling remain exactly those of frozen v1. Every
+Base feature values/row sampling are those of the v1 dataset. Every
 augmentation is built from a training window, never a held-out label, and its
 target-eligibility mask is translated without wrapping corridor boundaries.
 """

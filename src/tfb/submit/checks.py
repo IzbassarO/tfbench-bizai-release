@@ -1,9 +1,6 @@
 """Validate a full Kaggle submission against sample_submission.csv + submission_key.csv.
-
-usage: python -m tfb.submit.checks outputs/submissions/<name>.csv
 """
 from __future__ import annotations
-import sys
 import polars as pl
 from .. import io
 
@@ -71,11 +68,3 @@ def check(path) -> list[str]:
     q1 = k.filter(pl.col("task") == "queue").group_by("split").agg(pl.col("queue_pred").mean().alias("pos_rate"))
     print("queue positive rate:", q1)
     return errs
-
-
-if __name__ == "__main__":
-    e = check(sys.argv[1])
-    for x in e:
-        print("FAIL:", x)
-    print("OK" if not e else f"{len(e)} problems")
-    sys.exit(1 if e else 0)

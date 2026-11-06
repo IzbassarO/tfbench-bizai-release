@@ -31,13 +31,13 @@ def test_features_ignore_future():
 
 @NEEDS_CACHE
 def test_v2like_features_ignore_future():
-    """The slow-link and day-context columns (tfb.t2b.v2like) read nothing after T either."""
+    """The slow-link columns (tfb.t2b.v2like) read nothing after T either."""
     from tfb.t2b import features as FT
-    FT.V2L["slow"] = True; FT.V2L["day"] = True
+    FT.V2L["slow"] = True
     try:
         test_features_ignore_future()
     finally:
-        FT.V2L["slow"] = False; FT.V2L["day"] = False
+        FT.V2L["slow"] = False
 
 
 
@@ -64,23 +64,3 @@ def test_iou_and_decode():
     pr = np.zeros((2, 6, 4)); pr[0, 5, :2] = [0.9, 0.8]; pr[1, 5, 0] = 0.01
     D = M.decode(pr)
     assert D[0, 5, :2].all() and D[0].sum() == 2 and D[1].sum() == 0
-
-
-def test_test_month_priors_ignore_future():
-    """Test-month priors for a window must not change when masked data at/after its day (days mode)
-    or after T (sameday mode) is overwritten."""
-    from tfb.t2b import tm
-    panel, split = "D7_I210_W", "validation"
-    d = data.load(panel, split)
-    t = 288 * 3 + 15 * 12 + 7
-    base = M.priors(panel, np.arange(30))
-    a = {m: tm.window_priors(panel, split, np.array([t]), base, m) for m in ("days", "sameday")}
-    sp = d["mspeed"].copy()
-    try:
-        d["mspeed"][t + 1:] = 5.0                     # everything after T becomes queued
-        tm.stats.cache_clear()
-        b = {m: tm.window_priors(panel, split, np.array([t]), base, m) for m in ("days", "sameday")}
-    finally:
-        d["mspeed"][:] = sp; tm.stats.cache_clear()
-    for m in a:
-        np.testing.assert_array_equal(a[m]["ph"], b[m]["ph"]); np.testing.assert_array_equal(a[m]["onset"], b[m]["onset"])

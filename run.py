@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "outputs"
 ART = ROOT / "artifacts"
 PY = sys.executable
-# LightGBM's deterministic mode is fixed per thread count: num_threads is part of the recipe (8 for Task 1, 2 for V4).
+# LightGBM's deterministic mode is fixed per thread count: num_threads is part of the method (8 for Task 1, 2 for V4).
 ENV = dict(PYTHONPATH=str(ROOT / "src"), PYTHONWARNINGS="ignore", PYTHONDONTWRITEBYTECODE="1",
            OMP_NUM_THREADS="8", VECLIB_MAXIMUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
 
@@ -39,32 +39,30 @@ def m(module: str, *args: str) -> list[str]:
 
 # ------------------------------------------------------------------------------------------------ Task 2 (CPU)
 T2_CODEX = [   # family A v1 dataset + v2 (ongoing member) + v4 (onset member) on the training split
-    m("tfb.t2.run", "--stage", "all", "--feature-set", "enhanced", "--window-policy", "release", "--refresh", "--median-experiment",
+    m("tfb.t2.run", "--feature-set", "enhanced", "--window-policy", "release", "--refresh", "--median-experiment",
       "--release-root", "{data}"),
-    m("tfb.t2.v2_experiment", "--stage", "all", "--root", "{data}"),
+    m("tfb.t2.v2_experiment", "--root", "{data}"),
     m("tfb.t2.v4_export", "--root", "{data}"),
     m("tfb.t2.v4_data", "--fold", "final", "--root", "{data}"),
-    m("tfb.t2.v4_model", "--fold", "final", "--stage", "normal", "--threads", "2", "--root", "{data}"),
-    m("tfb.t2.v4_predict", "--threads", "2", "--skip-shared-check", "--root", "{data}"),
+    m("tfb.t2.v4_model", "--fold", "final", "--threads", "2", "--root", "{data}"),
+    m("tfb.t2.v4_predict", "--threads", "2", "--root", "{data}"),
 ]
 T2B_BASE = [m("tfb.t2b.run", "--stage", "windows"), m("tfb.t2b.run", "--stage", "final")]
 IMPUTER = [py("from tfb.t1 import imputer_clean as IC; IC.fit('outputs/t1/imputer_clean', rounds=20000, seed=42)")]
 ONSET_TRAIN = [
     m("tfb.t2.v4_hyb", "--stage", "released"),
     py("from tfb.t2b import hybrid as H, hyb_clean as HC\n"
-       "H.HYB_MIX = H.io.OUTPUTS / 't1' / 'train_hybrid_speed_clean'\n"
-       "HC.labels(H.io.OUTPUTS / 't1' / 'imputer_clean' / 'lgbm_speed.txt', 4000, H.HYB_MIX, lambda *a, **k: None)\n"
+       "HC.labels(H.io.OUTPUTS / 't1' / 'imputer_clean' / 'lgbm_speed.txt', 4000, H.HYB_MIX)\n"
        "H.build_cache('mix_clean'); H.stage_final('mix_clean')"),
 ]
-ONSET_DECODE = [   # A_hyb = decode30(0.5 v4_hyb + 0.5 t2b noloc_hyb), spliced over E25's ongoing rows (replaced below)
+ONSET_DECODE = [   # A_hyb = decode30(0.5 v4_hyb + 0.5 t2b noloc_hyb), spliced over a first ongoing decode (replaced below)
     py("from tfb.t2b import hybrid as H, ladder; from tfb.t2b.ladder import write_e25\n"
        "ladder.write()   # queue_onset_A.csv: the row template of write_a_hyb\n"
        "H.write_a_hyb('mix_clean'); write_e25('../t2/queue_onset_E25.csv', 0.25)\n"
        "H.splice('queue_onset_A_hyb_mix_clean.csv', 'queue_onset_E25.csv', 'queue_onset_Ahyb_mix_clean_E25.csv', ref='queue_onset_A_hyb_mix_clean.csv')"),
 ]
 ONGOING_TRAIN = [   # v2l: family B noloc ongoing + slow-link features, trained on the selector's admissible ongoing windows,
-    py("import pickle; from tfb.t2b import harness as HS, hybrid as H, ongoing_v2l as V\n"   # selected on clean labels (rule B)
-       "H.HYB_MIX = H.io.OUTPUTS / 't1' / 'train_hybrid_speed_clean'   # written by stage onset (clean imputer)\n"
+    py("import pickle; from tfb.t2b import harness as HS, hybrid as H, ongoing_v2l as V\n"   # selected on clean labels
        "W = H.io.OUTPUTS / 't2b' / 'harness_clean'; W.mkdir(parents=True, exist_ok=True)\n"
        "for p in HS.io.T2_PANELS:\n"
        "    f = W / f'windows_{p}.parquet'\n"

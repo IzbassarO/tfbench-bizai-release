@@ -9,10 +9,9 @@ from __future__ import annotations
 import json, time
 import numpy as np
 import pandas as pd
-from scipy.optimize import lsq_linear, nnls
-from .. import io, final_config as FC
+from scipy.optimize import nnls
+from .. import io
 
-W = float(FC.get("task4.weight", 1e3))
 COLS = ["panel", "departure_time", "path_id", "origin_zone", "destination_zone", "path_flow"]
 
 

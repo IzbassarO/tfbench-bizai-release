@@ -1,4 +1,4 @@
-"""Export frozen V2 deployment marginals, with exact binary replay checks.
+"""Export V2 deployment marginals, with exact binary replay checks.
 
 ``queue_prob`` is a float64 model/blend probability BEFORE calibration,
 cardinality selection, or spatial decoding. The V2 decoder configuration is
@@ -59,7 +59,7 @@ def _frozen_hashes(output):
 
 
 def iter_window_probabilities(args, provenance):
-    """Read legal window inputs and reconstruct the frozen selected models.
+    """Read legal window inputs and reconstruct the selected models.
 
     The dates-filtered panel reader does not write a raw-data cache. It supplies
     only the masked row at T, ramps through T, and masked same-day context
@@ -98,7 +98,7 @@ def iter_window_probabilities(args, provenance):
         for model in models[key]:
             if len(model.mask) != len(model_names) or model.booster.feature_name() != [
                     name for name, take in zip(model_names, model.mask) if take]:
-                raise ValueError(f"Frozen model feature schema differs: {condition}/{variant}")
+                raise ValueError(f"Model feature schema differs: {condition}/{variant}")
         result = sum(model.predict(mx) for model in models[key]) / len(models[key])
         probability = np.zeros((6, n), np.float64)
         if onset:
@@ -135,7 +135,7 @@ def iter_window_probabilities(args, provenance):
                 else:
                     variant, fraction, calibrated, use_extent, label = member_parts(member)
                 if use_extent:
-                    raise ValueError("Extent-model selection needs a separate count export; frozen V2 currently uses none")
+                    raise ValueError("Extent-model selection needs a separate count export; V2 currently uses none")
                 arrays = history_arrays(history[history.window_id.eq(window.window_id)], window.forecast_origin, network, current)
                 x, names = build_features(arrays.speed, arrays.flow, arrays.occupancy, origin=12,
                     timestamps=arrays.timestamps, ramp_on=arrays.ramp_on, location_prior=prior,
@@ -156,7 +156,7 @@ def iter_window_probabilities(args, provenance):
                     window.condition, network.link_ids, probability, config, member)
             del current
             gc.collect()
-            log(f"v4 exported frozen V2 probabilities {panel}/{split}")
+            log(f"v4 exported V2 probabilities {panel}/{split}")
 
 
 def export_probabilities(args):
@@ -181,7 +181,7 @@ def export_probabilities(args):
         if onset and np.count_nonzero(p[:-1]):
             raise ValueError("Onset pre-T+30 marginals must be zero")
         if item.window_id not in window_rows:
-            raise ValueError("Model produced a window outside the frozen template")
+            raise ValueError("Model produced a window outside the template")
         rows = window_rows[item.window_id]
         if seen[rows].any():
             raise ValueError("Window probabilities exported twice")
@@ -201,7 +201,7 @@ def export_probabilities(args):
         prediction = decode_calibrated(p, item.config, onset=onset)[hi, li]
         mismatch = int(np.count_nonzero(prediction != out.queue_pred.to_numpy()))
         if mismatch:
-            raise ValueError(f"Frozen V2 replay differs at {item.window_id}: {mismatch} cells")
+            raise ValueError(f"V2 replay differs at {item.window_id}: {mismatch} cells")
         probabilities[rows] = p[hi, li]
         seen[rows] = True
         configs[item.window_id] = {k: v for k, v in item.config.items() if k != "fit"}
@@ -210,9 +210,9 @@ def export_probabilities(args):
             probability_sum=float(p.sum()), probability_min=float(p.min()), probability_max=float(p.max()),
             predicted_positive=int(prediction.sum()), replay_mismatches=mismatch))
     if not seen.all():
-        raise ValueError(f"Missing probabilities for {int((~seen).sum())} frozen V2 cells")
+        raise ValueError(f"Missing probabilities for {int((~seen).sum())} V2 cells")
     if immutable != _frozen_hashes(args.output):
-        raise RuntimeError("Frozen V1/V2 source artifacts changed during export")
+        raise RuntimeError("V1/V2 source artifacts changed during export")
     destination = args.output / "probs_v2.parquet"
     result = frame[KEYS].copy()
     result["queue_prob"] = probabilities
@@ -227,10 +227,9 @@ def export_probabilities(args):
         columns=[*KEYS, "queue_prob"], probability_stage="raw selected model/blend, before calibration and decoding",
         onset_t5_t25_zero=True, all_binary_predictions_replayed=True, replay_mismatches=0,
         frozen_artifact_hashes=immutable, input_sha256=provenance, decoder_configs=configs,
-        causal_inputs="published T-60..T-5 history, masked T, ramps <=T, masked same-day context <=T; train-fitted priors",
-        submitted=False)
+        causal_inputs="published T-60..T-5 history, masked T, ramps <=T, masked same-day context <=T; train-fitted priors")
     dump_json(target / "v2_probability_export_manifest.json", manifest)
-    log(f"v4 frozen V2 probability export: {len(result):,} cells, all binary rows exactly replayed")
+    log(f"v4 V2 probability export: {len(result):,} cells, all binary rows exactly replayed")
     return manifest
 
 

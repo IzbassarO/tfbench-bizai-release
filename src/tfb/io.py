@@ -22,10 +22,6 @@ def panels() -> list[str]:
     return [p["corridor_id"] for p in manifest()["panels"]]
 
 
-def family_of() -> dict[str, str]:
-    return {p["corridor_id"]: p["family_id"] for p in manifest()["panels"]}
-
-
 T2_PANELS = ("D7_I10_E", "D7_I10_W", "D7_I210_E", "D7_I210_W", "D7_I405_N", "D7_I405_S", "D12_I5_N", "D12_I5_S")
 
 

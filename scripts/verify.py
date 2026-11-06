@@ -20,7 +20,6 @@ dS_total <= 0.35 dS_state + 0.30 dS_queue (+ the reported odme / physics changes
 from __future__ import annotations
 import argparse, sys
 from pathlib import Path
-import numpy as np
 import polars as pl
 
 ROOT = Path(__file__).resolve().parents[1]

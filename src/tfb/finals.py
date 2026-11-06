@@ -1,10 +1,10 @@
-"""Rebuild a Kaggle final from its State member components (no training): state mix -> pp2 -> assembly.
+"""Rebuild a final from its State member components (no training): state mix -> pp2 -> assembly.
 
   PYTHONPATH=src python -m tfb.finals v3|v1 --components DIR [--out DIR]
     DIR holds the four member components named in configs/finals.yaml (components:).
     -> <out>/state_raw_<final>.csv, state_pp2_<final>.csv, <name>.csv; prints each sha256 against the recorded one.
-The mix is apply() below (v3: weights per traffic-regime bin) or two tfb.t1.blend calls (v1); pp2 is
-tfb.t3.apply, the assembly tfb.submit.assemble (queue = the E50v2l file, which equals base candidate + combo queue swap).
+The mix is apply() below (v3: weights per traffic-regime bin) or two tfb.t1.blend calls (v1); pp2 is tfb.t3.apply, the
+assembly tfb.submit.assemble with the final queue file.
 """
 from __future__ import annotations
 import argparse, hashlib
@@ -67,7 +67,7 @@ def mix(spec: dict, paths: list[Path], out: Path):
 def state_raw(f: dict, comp: dict, out: Path):
     if "mix" in f:
         mix(f["mix"], [comp[m] for m in f["mix"]["members"]], out); return
-    b, c = f["blend"]["b"], f["blend"]["c"]; a = (1 - b) / 2   # weights as tfb.t1.unet.final / tfb.t1.v4.unet_v2_arch (same floats)
+    b, c = f["blend"]["b"], f["blend"]["c"]; a = (1 - b) / 2
     ref = out.with_name(out.stem + "_3d90.csv")
     blend.main([f"{comp['lgbm']}@{a}", f"{comp['mlp']}@{a}", f"{comp['unet']}@{b}"], ref)
     blend.main([f"{ref}@{1 - c}", f"{comp['unet2']}@{c}"], out)

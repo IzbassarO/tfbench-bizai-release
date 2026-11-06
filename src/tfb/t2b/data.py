@@ -10,8 +10,6 @@ import numpy as np
 import pandas as pd
 from .. import cache, io
 
-STEP = 5  # minutes
-
 
 def downstream_order(panel: str, links: np.ndarray) -> np.ndarray:
     top = io.topology(panel).set_index("mainline_link_id")

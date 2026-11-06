@@ -1,15 +1,11 @@
 """Assemble the Kaggle upload file from per-task files.
 
-usage: python -m tfb.submit.assemble <name> --state outputs/t1/state_submission.csv
-          [--queue outputs/t2/queue_submission.csv] [--odme outputs/t4/path_flow_submission.csv] [--note "..."] [--base <name>]
-Missing task files fall back: state -> error (required), queue -> rule-based fallback, odme -> error.
-Writes outputs/submissions/<name>.csv, .sha256 and .manifest.json (+ diff_vs_base when --base is given). Unmatched key rows raise.
+usage: python -m tfb.submit.assemble <name> --state STATE.csv --queue QUEUE.csv --odme PATH_FLOW.csv [--out-dir DIR] [--note "..."]
+Writes <out-dir>/<name>.csv, .sha256 and .manifest.json. A missing file or an unmatched key row raises.
 """
 from __future__ import annotations
 import argparse, hashlib, json, subprocess, time
 from pathlib import Path
-import numpy as np
-import pandas as pd
 import polars as pl
 from .. import io
 from . import checks
@@ -19,15 +15,7 @@ KEYS = {"state": ["panel", "timestamp", "station_id", "link_id", "mask_regime"],
 VALS = {"state": ["speed_kmh", "flow_vph"], "queue": ["queue_pred"], "odme": ["path_flow"]}
 
 
-def fallback_queue(path: Path) -> Path:
-    """Onset: nothing until T+30, then links closest to threshold at T. Ongoing: persistence of queue at T."""
-    from ..t2_fallback import build  # noqa  (kept separate so family A's t2/ package is never touched)
-    return build(path)
-
-
 def git_rev() -> str:
-    marker = io.PROJECT / ".colab_code_revision"
-    if marker.exists(): return marker.read_text().strip()
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=io.PROJECT, text=True).strip()
     except Exception:
@@ -37,15 +25,14 @@ def git_rev() -> str:
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("name"); ap.add_argument("--state", required=True); ap.add_argument("--queue")
-    ap.add_argument("--odme", required=True); ap.add_argument("--note", default=""); ap.add_argument("--base")
+    ap.add_argument("--odme", required=True); ap.add_argument("--note", default="")
     ap.add_argument("--out-dir", default=str(io.OUTPUTS / "submissions"))
     a = ap.parse_args(argv)
     out_dir = Path(a.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     files = {"state": Path(a.state), "odme": Path(a.odme)}
     qp = Path(a.queue) if a.queue else io.OUTPUTS / "t2" / "queue_submission.csv"
     if not qp.exists():
-        print(f"queue file {qp} missing -> rule-based fallback")
-        qp = fallback_queue(io.OUTPUTS / "t2_fallback" / "queue_submission_fallback.csv")
+        raise SystemExit(f"queue file {qp} missing")
     files["queue"] = qp
     key = pl.read_csv(io.RELEASE / "submission_key.csv", infer_schema_length=0)  # all utf8
     key = key.with_columns(pl.col("submission_id").cast(pl.Int64))
@@ -83,11 +70,4 @@ def main(argv=None):
     print(json.dumps(man, indent=2))
     if errs:
         raise SystemExit("checks failed")
-    if a.base:
-        from .diff import record
-        record(out, a.base)
     return out
-
-
-if __name__ == "__main__":
-    main()

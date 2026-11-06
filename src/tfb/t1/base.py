@@ -1,12 +1,11 @@
-"""Task 1 shared pieces: holdouts, weekday x tod profile, temporal interpolation, state writer."""
+"""Task 1 shared pieces: weekday x tod profile, temporal interpolation, state writer.
+"""
 from __future__ import annotations
 import json
 import numpy as np
 import pandas as pd
 from .. import io, cache
 
-HOLDOUT_LAST30 = np.arange(243, 273)        # 2031-01-30 .. 2031-02-28
-HOLDOUT_AUTUMN = np.arange(122, 152)        # 2030-10-01 .. 2030-10-30
 SLOTS = 7 * io.STEPS_PER_DAY
 
 
@@ -74,15 +73,6 @@ def write_state(preds: dict, out, meta: dict | None = None):
         tpl.to_csv(out, mode="w" if first else "a", header=first, index=False); first = False
     if meta is not None:
         out.with_suffix(".meta.json").write_text(json.dumps(meta, indent=2))
-
-
-def log_experiment(**kw):
-    p = io.PROJECT / "experiments" / "log.csv"
-    df = pd.read_csv(p)
-    nxt = int(df.id.astype(str).str.extract(r"^E(\d+)$")[0].dropna().astype(int).max()) + 1
-    kw.setdefault("id", f"E{nxt:03d}"); kw.setdefault("date", pd.Timestamp.now().strftime("%Y-%m-%d"))
-    df = pd.concat([df, pd.DataFrame([kw])], ignore_index=True); df.to_csv(p, index=False)
-    return kw["id"]
 
 
 def read_state(path) -> dict:

@@ -1,6 +1,6 @@
-"""Rebuild causal Task 2 models, CV, reports and submissions from the raw release.
+"""Family A base stage: causal Task 2 datasets, temporal CV, model choice, final fit and queue file, from the raw release.
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m tfb.t2.run --stage all
+  python -m tfb.t2.run --release-root DIR
 """
 from __future__ import annotations
 
@@ -221,7 +221,7 @@ def prepare(args, *, final=False):
                     model_x, y, ym, valid = x, truth.reshape(-1), denoised.reshape(-1), target_eligible.reshape(-1)
                 if is_train:
                     # Inverse-probability weights preserve calibrated probabilities
-                    # while bounding memory on the shared 16 GB machine.
+                    # while bounding memory.
                     sample_p = 1. if condition == "queue_onset" else args.negative_sample
                     keep = valid & (y | ym | (rng.random(len(y)) < sample_p))
                     weight = np.where(y | ym, 1., 1. / sample_p).astype(np.float32)
@@ -421,7 +421,7 @@ def choose_models(args, summary=None):
         summary = pd.read_csv(args.output / f"cv_scores_{experiment_tag(args)}.csv")
     overall = summary[summary.panel.eq("OVERALL")]
     # Condition-specific selection maximizes the shift-weighted held-out score.
-    # The predefined 50/50 blend is selected unless it loses materially.
+    # The 50/50 blend is selected unless it loses materially.
     learned = overall[overall.model.isin(["lgb_full", "lgb_no_location", "blend_50"])]
     onset_candidates = overall[overall.model.isin(["lgb_full", "lgb_no_location", "blend_50", "onset_prior", "onset_event_prior", "onset_lgb_prior_50", "lgb_median_labels", "lgb_base_onset"])]
     onset_member = str(onset_candidates.sort_values(["onset", "model"], ascending=[False, True]).iloc[0].model)
@@ -573,188 +573,10 @@ def verify_submissions(args, filenames=None):
     log("Task 2 submission coverage, binary values and common-key verification passed")
 
 
-def write_reports(args):
-    summary = pd.read_csv(args.output / f"cv_scores_{experiment_tag(args)}.csv")
-    overall = summary[summary.panel.eq("OVERALL")]
-    choice = json.loads((args.output / f"chosen_model_{experiment_tag(args)}.json").read_text())
-    summary.to_csv(args.output / "cv_scores.csv", index=False)
-    dump_json(args.output / "chosen_model.json", choice)
-    for prefix in ("cv_window_scores", "cv_monthly_scores"):
-        source = args.output / f"{prefix}_{experiment_tag(args)}.csv"
-        if not source.exists() and prefix == "cv_monthly_scores":
-            detail = pd.read_csv(args.output / f"cv_window_scores_{experiment_tag(args)}.csv")
-            if args.window_policy == "release":
-                detail = detail[detail.official_like.isin([True, "True", 1])]
-            monthly = []
-            for month, subset in detail.groupby(detail.origin.str[:7]):
-                group = aggregate_scores(subset)
-                group["month"] = month
-                monthly.append(group)
-            pd.concat(monthly).to_csv(source, index=False)
-        frame = pd.read_csv(source)
-        frame.to_csv(args.output / f"{prefix}.csv", index=False)
-    audit_dir = args.output / "datasets" / dataset_tag(args)
-    counts = pd.read_csv(audit_dir / "dataset_counts.csv")
-    audit = pd.read_csv(audit_dir / "window_audit.csv")
-    labels = pd.read_csv(audit_dir / "label_audit.csv")
-    with np.load(audit_dir / f"{args.panels[0]}_queue_onset.npz", allow_pickle=False) as first:
-        feature_names = first["feature_names"].tolist()
-    n_features = len(feature_names)
-    n_location = sum(n.startswith("location_") for n in feature_names)
-    dense_path = args.output / f"cv_scores_dense_{experiment_tag(args)}.csv"
-    dense_summary = pd.read_csv(dense_path) if dense_path.exists() else summary
-    dense_overall = dense_summary[dense_summary.panel.eq("OVERALL")]
-    protocol_text = ("Primary CV uses five onset and five ongoing windows per panel in each held-out calendar month: "
-        "80 onset + 80 ongoing windows across January and February. Training augments quota-limited selections from "
-        "overlapping 30-day blocks starting every seven days and at month starts. The union may overlap; each source "
-        "block separately obeys the five-per-condition quota and shared six-hour spacing. Dense-union held-out scores "
-        "are reported separately and do not determine primary model selection. Selector state uses same-day forward "
-        "fill of missing raw speeds, the release-contract established-history condition, and shared spacing. These "
-        "extra details improve released-train origin matching from 39/80 to 67/80; hidden underlying labels still "
-        "prevent exact replication. The shared spacing is an empirical property of all 240 released windows, "
-        "stronger than the within-condition published minimum.") if args.window_policy == "release" else (
-        "This initial diagnostic uses the supplied strict T-inclusive predicate, eligibility-gated queue proxies "
-        "and independent condition spacing. It has 39/40 onset-origin matches but 0/40 ongoing-origin matches, "
-        "and is retained as a negative selector experiment.")
-    comparisons = []
-    for feature_set in ("base", "enhanced", "base_release", "enhanced_release"):
-        score_path = args.output / f"cv_scores_{feature_set}.csv"
-        if score_path.exists():
-            frame = pd.read_csv(score_path)
-            frame = frame[frame.panel.eq("OVERALL")].copy()
-            frame.insert(0, "features", feature_set)
-            comparisons.append(frame)
-    verification = json.loads((args.output / "submission_verification.json").read_text()) if (args.output / "submission_verification.json").exists() else {}
-    checks = []
-    test_log = args.output / "tests.log"
-    if test_log.exists():
-        passed = [line.strip() for line in test_log.read_text().splitlines() if " passed" in line]
-        if passed:
-            checks.append("Scoped tests: " + passed[-1] + ".")
-    combined_check = args.output / "make_check_learned.log"
-    if combined_check.exists() and combined_check.read_text().strip().endswith("OK"):
-        checks.append("The shared full-submission checker passed a temporary baseline carrier with its queue rows replaced by these predictions.")
-    reproduction_path = args.output / "reproducibility.json"
-    if reproduction_path.exists():
-        reproduction = json.loads(reproduction_path.read_text())
-        if reproduction.get("cached_full_pipeline_identical"):
-            checks.append("The full pipeline with cached feature/model artifacts reproduced both CSVs byte for byte.")
-        if reproduction.get("fresh_refit_identical"):
-            checks.append("A fresh final-model refit from the same raw-derived datasets also reproduced both CSVs byte for byte.")
-    validation_text = " ".join(checks)
-    onset_score = float(overall[overall.model.eq(choice["onset"])].onset.iloc[0])
-    ongoing_row = overall[overall.model.eq(choice["ongoing"])].iloc[0]
-    combined = (onset_score + float(ongoing_row.ongoing)) / 2
-    shift_combined = (onset_score + float(ongoing_row.shift_ongoing)) / 2
-    def table(frame):
-        cols = frame.columns.tolist()
-        lines = ["| " + " | ".join(cols) + " |", "|" + "|".join(["---"] * len(cols)) + "|"]
-        for row in frame.itertuples(index=False, name=None):
-            lines.append("| " + " | ".join(f"{v:.4f}" if isinstance(v, (float, np.floating)) else str(v) for v in row) + " |")
-        return "\n".join(lines)
-    experiments = f"""# Task 2 experiments
-
-Generated automatically by `python -m tfb.t2.run`. All scores use Jan–Feb 2031 held out from June–December training, raw train-observation threshold proxies and official eligible-cell IoU. Feature/decode decisions never use future eligibility; it enters only supervised training selection and the scorer. Final models refit all 273 train days. The held-out months also guide model selection, so these are development CV estimates.
-
-{protocol_text}
-
-## Models and overall scores
-
-{table(overall[['model','onset','ongoing','total','shift_ongoing','shift_total']])}
-
-Persistence uses the latest causal observation through T, carrying T−5 forward if T is masked. The ordinary occupancy-prior rule predicts only T+30 at historical bottlenecks with expected-IoU decoding. Separate LightGBM onset/ongoing classifiers use {n_features} causal features ({args.feature_set}), total-link FD quantities, calendar, spatial trends, ramps, queue components, head/tail velocities and shockwave forecasts. The no-location member removes {n_location} explicit location/prior columns; static geometry/FD quantities can still weakly identify a link. Enhanced features append masked full-day context, filled-neighbor/slow-link geometry and conditional onset-event priors; each training day’s five-way fold is excluded from its conditional prior. Full-day context uses only the released masked prefix through T, with protected raw window-history observations overlaid in training. `lgb_base_onset` trains an independent onset classifier using only the first 183 columns, allowing the simpler onset member alongside enhanced ongoing models. `onset_event_prior` predicts the conditional event prior alone at T+30; `onset_lgb_prior_50` averages it with the full onset classifier before decoding. `physics_motion` extrapolates empirical queue boundaries for ongoing, using the full onset model. The median experiment changes only training labels, retaining the same windows and raw-proxy evaluation; its median-truth sensitivity appears in the feature-specific `cv_window_scores_*.csv`.
-
-Shift weights are 1+4r, where r is the fraction of current queued observable links with train time-of-day queue frequency below .05. These weights emphasize non-recurrent queues but are not a calibrated incident simulator. Overall aggregation averages conditions, directions and the four Task 2 families equally.
-
-## Per-panel results
-
-{table(summary[summary.panel.ne('OVERALL')][['model','panel','n_onset','n_ongoing','onset','ongoing','total','shift_ongoing']])}
-
-## Dense-union CV diagnostic
-
-{table(dense_overall[['model','n_onset','n_ongoing','onset','ongoing','total','shift_ongoing','shift_total']])}
-
-## Feature-set and window-policy experiments
-
-{table(pd.concat(comparisons)[['features','model','n_onset','n_ongoing','onset','ongoing','total','shift_ongoing','shift_total']])}
-
-The original `base`/`enhanced` runs share the initial dense selector and are paired feature ablations. The `_release` runs change the window protocol and primary sample size; their absolute scores should not be treated as a paired feature-only gain.
-
-## Window reconstruction and training sizes
-
-The actual organizer selector and underlying-state labels are not public. Our deterministic selectors apply the published 70% history coverage, horizon queue and <=.9 persistence IoU safeguards. {protocol_text} This is an empirical policy replication, not a claim of exact hidden-label reconstruction. `first_five_exact_matches` uses a separately capped full-train pass, never union.head(5).
-
-{table(audit)}
-
-{table(counts)}
-
-Negative ongoing training cells are sampled at {args.negative_sample:.3f}, with inverse-probability weights. All eligible positive cells under either label variant are kept. All links/times remain in CV and deployment. Onset trains and predicts T+30 only; its other five horizons are zero. No Task 1 reconstructions enter this pipeline.
-
-## Label denoising
-
-{table(labels)}
-
-`median3` is a centered temporal median only for train target sensitivity. Features always remain causal and use no centered smoothing. Hidden underlying-state labels may disagree with both proxies.
-
-## Determinism and artifacts
-
-Seed={args.seed}, LightGBM deterministic=True, force_col_wise=True, fixed threads={args.threads}, rounds={args.rounds}. Chosen configuration: `{json.dumps(choice, sort_keys=True)}`. Per-window scores, Jan/Feb separate results, feature importances, models and raw-state caches are in `outputs/t2/`. No Kaggle submissions were made.
-
-{validation_text} Evidence is in `tests.log`, `submission_verification.json` and `reproducibility.json`; the independent template/model audit is `see report, Sec. III-C`. A separate transfer experiment in `see report, Sec. III-C` found no compelling improvement from the earlier broad-window models, which were excluded from the final ensemble.
-"""
-    args.reports.mkdir(parents=True, exist_ok=True)
-    (args.reports / "codex_02_task2_experiments.md").write_text(experiments)
-    selected_panels = []
-    for panel in args.panels:
-        a = summary[summary.panel.eq(panel) & summary.model.eq(choice["onset"])].iloc[0]
-        b = summary[summary.panel.eq(panel) & summary.model.eq(choice["ongoing"])].iloc[0]
-        selected_panels.append(dict(panel=panel, onset=a.onset, ongoing=b.ongoing,
-                                    total=(a.onset+b.ongoing)/2, shift_ongoing=b.shift_ongoing))
-    status = f"""# Task 2 status
-
-Prepared complete validation/private queue files; **nothing submitted to Kaggle**.
-
-Chosen onset `{choice['onset']}`; ongoing `{choice['ongoing']}`. Jan–Feb development CV: onset **{onset_score:.4f}**, ongoing **{float(ongoing_row.ongoing):.4f}**, S_queue **{combined:.4f}**; shift-weighted S_queue **{shift_combined:.4f}**. Implied queue leaderboard contribution **0.30 × S_queue = {0.30*combined:.4f}** (shift proxy: {0.30*shift_combined:.4f}). These are local noisy-label estimates, not measured leaderboard scores.
-
-{protocol_text}
-
-{table(pd.DataFrame(selected_panels))}
-
-All model CV results:
-
-{table(overall[['model','onset','ongoing','total','shift_ongoing','shift_total']])}
-
-Artifacts: `outputs/t2/queue_submission.csv`, `outputs/t2/queue_submission_persistence.csv`, `outputs/t2/submission_verification.json`. Coverage and hashes: `{json.dumps(verification, sort_keys=True)}`.
-
-{validation_text} Independent artifact checks are in `see report, Sec. III-C`. The broad-window model-transfer experiment did not justify changing the selected ensemble; see `see report, Sec. III-C`.
-
-Rebuild from raw data with:
-
-```bash
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src .venv/bin/python -m tfb.t2.run --stage all --feature-set {args.feature_set} --window-policy {args.window_policy} --refresh --median-experiment
-```
-
-The pipeline writes only Task 2 owned source/output/report paths. Runtime/environment metadata is in `outputs/t2/run_metadata.json`. `see report, Sec. III-C` records the authoritative scorer and schema audit, including conflicting selector descriptions.
-
-Risks: hidden queues use noise-free underlying speeds, while CV targets noisy released measurements; no released Task 2 truth exists. Selection relies on the disclosed late-horizon onset artifact. Primary quota CV has only 160 windows; Jan/Feb development tuning can overestimate transfer. March/April incident frequency differs from train; the rare-queue weight is a proxy. Exact selector internals are unpublished; even the improved proxy matches only 67/80 train origins. Explicit location removal retains static FD/geometry fingerprints. No validation/private target or future observation was used.
-
-Next ideas, ranked by expected gain:
-
-1. Incident-focused ongoing training, especially D7_I10_W, D7_I210_W and D7_I405_S: generate non-recurrent/boundary-shift examples and tune on separate autumn held-out incidents.
-2. Hybrid queue-label repair and onset localization for D7_I10_W, D7_I405_S and D7_I210_W, using FD/flow consistency and spatial neighbors; evaluate against unchanged raw eligible proxies.
-3. Calibrate queue-component probabilities and expected-IoU cardinality using a disjoint month; cell independence is approximate.
-4. Ensemble onset seeds with bottleneck-specific discharge/demand features, gating gains on two temporal holdouts.
-5. Learn queue-tail/head motion residuals around recurrent bottlenecks and blend a geometry-only member for incident robustness.
-"""
-    (args.reports / "codex_STATUS.md").write_text(status)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-root", type=Path, default=Path(os.environ.get("TFB_RELEASE", str(PROJECT / "data/kaggle_public"))))
     parser.add_argument("--output", type=Path, default=PROJECT / "outputs/t2")
-    parser.add_argument("--reports", type=Path, default=PROJECT / "reports")
-    parser.add_argument("--stage", choices=["all", "prepare", "cv", "select", "prepare-final", "fit-final", "predict", "verify", "report"], default="all")
     parser.add_argument("--panel", action="append")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--rounds", type=int, default=350)
@@ -776,24 +598,12 @@ def main():
         parser.error("--onset-prior-folds must be at least 2")
     args.output.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    if args.stage in ("all", "prepare"):
-        prepare(args)
-    if args.stage in ("all", "cv"):
-        cv(args)
-    if args.stage == "select":
-        choose_models(args)
-    if args.stage in ("all", "prepare-final"):
-        prepare(args, final=True)
-    if args.stage == "fit-final":
-        fit_models(args, final=True)
-    if args.stage in ("all", "predict"):
-        predict(args)
-    if args.stage == "verify":
-        verify_submissions(args)
-    if args.stage in ("all", "report"):
-        write_reports(args)
+    prepare(args)
+    cv(args)
+    prepare(args, final=True)
+    predict(args)
     import lightgbm, pyarrow
-    metadata = dict(stage=args.stage, elapsed_seconds=time.monotonic()-started,
+    metadata = dict(elapsed_seconds=time.monotonic()-started,
         python=platform.python_version(), platform=platform.platform(), numpy=np.__version__,
         pandas=pd.__version__, lightgbm=lightgbm.__version__, pyarrow=pyarrow.__version__,
         seed=args.seed, rounds=args.rounds, threads=args.threads, panels=args.panels,
@@ -801,10 +611,10 @@ def main():
         refresh=args.refresh, reuse_models=args.reuse_models,
         finished_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     runtime_dir = args.output / "runtime"
-    dump_json(runtime_dir / f"{args.stage}_{experiment_tag(args)}.json", metadata)
+    dump_json(runtime_dir / f"all_{experiment_tag(args)}.json", metadata)
     metadata["stage_metadata"] = {p.stem: json.loads(p.read_text()) for p in sorted(runtime_dir.glob("*.json"))}
     dump_json(args.output / "run_metadata.json", metadata)
-    log(f"completed {args.stage} in {time.monotonic()-started:.1f}s")
+    log(f"completed in {time.monotonic()-started:.1f}s")
 
 
 if __name__ == "__main__":

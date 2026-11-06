@@ -13,15 +13,7 @@ import numpy as np
 
 warnings.filterwarnings("ignore", message="(Mean of empty slice|All-NaN slice encountered)")
 
-NSLOT = 13
-PHYS = {"on": False}  # extra location-free physics features (G member, tfb.t2b.phys)
-ASM = {"on": False}   # ASM propagation features (tfb.t2b.asm); off = recipe features unchanged
-Q2 = {"on": False}    # structure / N-balance / inflow features (tfb.t2b.q2feat, 2026-11-01); off = recipe unchanged
-V2L = {"slow": False, "day": False}  # v2-like ongoing features (tfb.t2b.v2like, see report, Sec. III-C): slow-link distances, day context
-ALIVE = {"on": False}  # queue trajectory over the history + alive / dissolved projection per step (see report, Sec. III-C)
-ALIVE_H = ("al_proj_h", "al_alive_h", "al_frac_h")
-K_EXT = 12  # downstream links scanned for the onset head (extent features)
-DAY_COLS = ("run_min", "cum_min", "since_first", "cor_count", "cor_peak", "cor_since_peak", "cor_dpeak", "cor_d30", "cor_since_first", "known_frac")
+V2L = {"slow": False}  # slow-link ongoing features (tfb.t2b.v2like)
 
 
 def ffill_slots(a: np.ndarray) -> np.ndarray:
@@ -146,137 +138,15 @@ def link_features(B: dict, net: dict, st: dict, wt: dict, tod: np.ndarray, dow: 
         f["inside"][i] = (dist[np.arange(L), c] == 0)
         f["d_up"][i] = np.where(x < tails[c], tails[c] - x, 0)
         f["d_down"][i] = np.where(x > heads[c], x - heads[c], 0)
-    if PHYS["on"] and "c" in st:
-        f.update(phys_features(B, net, st, s, q, r))
-    if ASM["on"]:
-        from .asm import features as asm_features
-        f.update(asm_features(B, net, st))
-    if Q2["on"]:
-        f.update(q2_features(net, st, s, q, qm, geo))
     if V2L["slow"]:
         from .v2like import slow_features
         f.update(slow_features(st, r))
-    if V2L["day"] and "DC" in B:
-        f.update({f"day_{k}": B["DC"][..., i] for i, k in enumerate(DAY_COLS)})
-    if ALIVE["on"]:
-        a, geo["alive"] = alive_features(qm); f.update(a)
     if prior is not None:
         for k, v in prior.items():
             f[k] = v
     names = list(f)
     X = np.stack([np.asarray(f[k], np.float32) for k in names], -1)
     return X, names, geo
-
-
-def _down(a: np.ndarray, K: int) -> np.ndarray:
-    """[n, L] -> [n, L, K]: value at link j+o (o = 0..K-1), NaN beyond the corridor end."""
-    L = a.shape[1]; J = np.arange(L)[:, None] + np.arange(K)[None]
-    out = a[:, np.minimum(J, L - 1)].astype(np.float64); out[:, J >= L] = np.nan
-    return out
-
-
-def phys_features(B, net, st, s, q, r) -> dict:
-    """Onset physics without location identity: density/k_crit level and trend, speed-drop slopes, upstream
-    arrival and on-ramp growth vs observed discharge capacity c (train p99.5 flow, scenario-invariant), lane drop,
-    and the onset extent: strongest downstream bottleneck within K_EXT links (stress, slots to breakdown, km away)
-    and the tail speed it would need to reach this link by T+30."""
-    x, c = st["x"], st["c"]; f = {}
-    with np.errstate(all="ignore"):
-        k = q / np.maximum(s, 1) / net["k_crit"]
-        f["k_T"] = k[:, 12]; f["k_slope"] = np.nanmean(k[:, 10:13], 1) - np.nanmean(k[:, 0:3], 1)
-        f["k_down_max"] = np.nanmax(_down(k[:, 12], 4), 2)
-        f["dr3"] = r[:, 12] - r[:, 9]; f["dr6"] = r[:, 12] - r[:, 6]; f["dr12"] = r[:, 12] - r[:, 0]
-        q3, q0 = np.nanmean(q[:, 10:13], 1), np.nanmean(q[:, 0:3], 1)
-        u = q3 / c; tt = np.clip((c - q3) / np.maximum((q3 - q0) / 10, 1.0), -50, 200)
-        up = np.stack([np.roll(q3 - q0, j, 1) for j in range(1, 6)], 0); up[:, :, :5] = np.nan
-        f["up_growth"] = np.nanmean(up, 0) / st["ce4"]
-        ron = np.nan_to_num(B["RON"]); r3, r0 = ron[:, 10:13].mean(1), ron[:, 0:3].mean(1)
-        f["ron_down"] = np.nansum(_down(r3, 4), 2) / st["ce4"]; f["ron_growth"] = np.nansum(_down(r3 - r0, 4), 2) / st["ce4"]
-        f["demand_ce4"] = (np.nanmean(np.stack([np.roll(q3, j, 1) for j in (1, 2)]), 0) + f["ron_down"] * st["ce4"]) / st["ce4"]
-        f["lane_drop"] = np.broadcast_to(np.nanmin(_down(net["lanes"][None].astype(float), 4), 2)[0] / net["lanes"], u.shape)
-        U = _down(u, K_EXT); TT = _down(tt, K_EXT); D = _down(x[None], K_EXT)[0] - x[:, None]
-        b = np.nanargmax(np.where(np.isnan(U), -np.inf, U), 2)
-        ii = np.arange(len(u))[:, None]; jj = np.arange(u.shape[1])[None]
-        f["ext_u"] = U[ii, jj, b]; f["ext_ttb"] = TT[ii, jj, b]; f["ext_d"] = D[jj, b]
-        f["ext_req_w"] = f["ext_d"] / np.maximum(6 - f["ext_ttb"], 0.5)  # km per slot the tail must travel
-        f["ext_n_hot"] = np.nansum(U > 0.9, 2)
-    return f
-
-
-def q2_features(net, st, s, q, qm, geo) -> dict:
-    """Q2 (see report, Sec. III-C): structure of the next links, vehicle balance dN = sum(q / v * len) over 15 / 30 / 60 min on the
-    corridor and on the 6 links ending at j (storage-normalised), inflow to the tail vs 0.69 * capacity of the head,
-    upstream flow / capacity, density / k_crit downstream, and the tail movement over 6 slots. Observed cells <= T only
-    (s, q are the forward-filled history; a missing cell carries the last observed value)."""
-    x, L = st["x"], st["L"]; cap, lanes, kc, kj, ln = net["cap"], net["lanes"], net["k_crit"], net["k_jam"], net["length"]
-    n = s.shape[0]; f = {}
-    nxt = np.minimum(np.arange(L) + 1, L - 1)
-    f["cap_next_r"] = np.broadcast_to(cap[nxt] / cap, (n, L)); f["lanes_next_d"] = np.broadcast_to(lanes[nxt] - lanes, (n, L))
-    f["kcrit_next_r"] = np.broadcast_to(kc[nxt] / kc, (n, L))
-    K = 12; J = np.arange(L)[:, None] + np.arange(1, K + 1)[None]; Jc = np.minimum(J, L - 1)
-    drop = (cap[Jc] < 0.9 * cap[:, None]) & (J < L)
-    d = np.where(drop.any(1), x[Jc[np.arange(L), drop.argmax(1)]] - x, 30.0)
-    f["d_capdrop"] = np.broadcast_to(d, (n, L))
-    with np.errstate(all="ignore"):
-        N = q / np.maximum(s, 1.0) * ln                       # [n, 13, L] vehicles on the link
-        store = ln * kj; cstore = store.sum()
-        for k, nm in ((3, "15"), (6, "30"), (12, "60")):
-            dN = N[:, 12] - N[:, 12 - k]                        # [n, L]
-            f[f"dN_cor_{nm}"] = np.broadcast_to(np.nansum(dN, 1)[:, None] / cstore, (n, L))
-            cs = np.concatenate([np.zeros((n, 1)), np.nancumsum(dN, 1)], 1); ss = np.concatenate([[0.0], np.cumsum(store)])
-            j = np.arange(L); a = np.maximum(j - 5, 0)
-            f[f"dN_seg_{nm}"] = (cs[:, j + 1] - cs[:, a]) / (ss[j + 1] - ss[a])
-        qT = q[:, 12]; up1 = np.roll(qT, 1, 1); up1[:, 0] = np.nan
-        f["q_up_cap"] = up1 / cap
-        # inflow to the tail of the nearest cluster (or to this link when none) vs 0.69 * capacity of its head
-        tail_j = np.where(np.isfinite(geo["tail_x"]), np.searchsorted(x, np.nan_to_num(geo["tail_x"], nan=0.0)), np.arange(L)[None])
-        head_j = np.where(np.isfinite(geo["head_x"]), np.searchsorted(x, np.nan_to_num(geo["head_x"], nan=0.0)), np.arange(L)[None])
-        tail_j = np.clip(tail_j, 0, L - 1).astype(int); head_j = np.clip(head_j, 0, L - 1).astype(int)
-        ii = np.arange(n)[:, None]
-        qin = np.where(tail_j > 0, qT[ii, np.maximum(tail_j - 1, 0)], np.nan)
-        f["qin_tail_r"] = qin / (0.69 * cap[head_j])
-        kk = q / np.maximum(s, 1.0) / kc
-        f["k_down_max3"] = np.nanmax(_down(kk[:, 12], 4)[:, :, 1:], 2)
-        f["k_T_r"] = kk[:, 12]
-        # tail movement over 6 slots (km per slot, + = downstream): tail at T vs tail of the run touching it at T-30
-        vt6 = np.full((n, L), np.nan)
-        for i in range(n):
-            if not np.isfinite(geo["tail_x"][i]).any():
-                continue
-            runs6 = _runs(qm[i, 6])
-            for tx in np.unique(geo["tail_x"][i][np.isfinite(geo["tail_x"][i])]):
-                j = geo["tail_x"][i] == tx; a = int(np.searchsorted(x, tx)); b = int(np.searchsorted(x, geo["head_x"][i][j][0]))
-                for (a2, b2) in runs6:
-                    if b2 >= a - 1 and a2 <= b + 1:
-                        vt6[i, j] = (tx - x[a2]) / 6; break
-        f["c_vtail6"] = vt6
-    return f
-
-
-def alive_features(qm: np.ndarray) -> tuple[dict, dict]:
-    """Queue trajectory over the history (qm [n, 13, L]: forward-filled queued masks of the slots <= T): corridor
-    queued-link count at T and its change over 15 / 30 / 60 min, links newly queued / freed over 15 and 30 min, peak
-    count and distance to it; per link the queued / free run length up to T and the 15-min flip. Also returns the
-    per-window count and 15-min slope for the step columns (alive_h)."""
-    n, _, L = qm.shape; cnt = qm.sum(2).astype(np.float32)
-    bc = lambda v: np.broadcast_to(np.asarray(v, np.float32)[:, None], (n, L))
-    f = {"al_cnt_T": bc(cnt[:, 12]), "al_d15": bc(cnt[:, 12] - cnt[:, 9]), "al_d30": bc(cnt[:, 12] - cnt[:, 6]),
-         "al_d60": bc(cnt[:, 12] - cnt[:, 0]), "al_peak": bc(cnt.max(1)), "al_dpeak": bc(cnt[:, 12] - cnt.max(1)),
-         "al_new15": bc((qm[:, 12] & ~qm[:, 9]).sum(1)), "al_freed15": bc((~qm[:, 12] & qm[:, 9]).sum(1)),
-         "al_new30": bc((qm[:, 12] & ~qm[:, 6]).sum(1)), "al_freed30": bc((~qm[:, 12] & qm[:, 6]).sum(1))}
-    qrun = np.zeros((n, L), np.float32); frun = np.zeros((n, L), np.float32); aq = np.ones((n, L), bool); af = aq.copy()
-    for k in range(12, -1, -1):
-        aq &= qm[:, k]; af &= ~qm[:, k]; qrun += aq; frun += af
-    f["al_qrun"] = qrun; f["al_frun"] = frun; f["al_flip15"] = qm[:, 12].astype(np.float32) - qm[:, 9]
-    return f, dict(cnt=cnt[:, 12], slope=(cnt[:, 12] - cnt[:, 9]) / 3)
-
-
-def alive_h(aw: dict, h: int, L: int) -> np.ndarray:
-    """[n, L, 3] step columns: projected queued-link count at step h (count at T + 15-min slope x h, floor 0), the
-    alive flag of that projection, and its fraction of the count at T ('alive / dissolved at the step')."""
-    proj = np.maximum(aw["cnt"] + aw["slope"] * h, 0)
-    cols = np.stack([proj, proj > 0.5, proj / np.maximum(aw["cnt"], 1)], -1).astype(np.float32)
-    return np.broadcast_to(cols[:, None], (len(proj), L, 3))
 
 
 def horizon_features(geo: dict, x: np.ndarray, h: int) -> np.ndarray:

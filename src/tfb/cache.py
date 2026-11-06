@@ -1,11 +1,6 @@
-"""Dense [time x link] tensors per (panel, split), cached as npz.
-TFB_TESTMASK="share:seed" (tfb.t1.testmask only): load() hides that share of the OBSERVED cells of validation/private
-(released data; 1-hour blocks per link) from the inputs, adds them to the targets and keeps their values as tm_speed /
-tm_flow for scoring; nothing else changes."""
+"""Dense [time x link] tensors per (panel, split), cached as npz."""
 from __future__ import annotations
-import os
 import sys
-import zlib
 import numpy as np
 import pandas as pd
 from . import io
@@ -88,18 +83,6 @@ def load(panel: str, split: str) -> Panel:
     z = np.load(p, allow_pickle=False)
     pn = Panel({k: z[k] for k in z.files})
     pn["panel"] = str(pn["panel"]); pn["split"] = str(pn["split"])
-    tm = os.environ.get("TFB_TESTMASK")
-    return test_mask(pn, *map(float, tm.split(":"))) if tm and split in ("validation", "private") else pn
-
-
-def test_mask(pn: Panel, share: float, seed: float) -> Panel:
-    obs = pn.melig & np.isfinite(pn.mspeed) & np.isfinite(pn.mflow) & ~pn.target
-    T, L = obs.shape; rng = np.random.default_rng([int(seed), zlib.crc32(f"{pn.panel}/{pn.split}".encode())])
-    hide = np.repeat(rng.random((T // 12 + 1, L)) < share, 12, 0)[:T] & obs
-    pn = Panel(pn, tm_hidden=hide, tm_speed=np.where(hide, pn.mspeed, np.nan).astype(np.float32),
-               tm_flow=np.where(hide, pn.mflow, np.nan).astype(np.float32))
-    for k in ("mspeed", "mflow", "mocc"): pn[k] = np.where(hide, np.nan, pn[k]).astype(np.float32)
-    pn["mpct"] = np.where(hide, 0, pn.mpct).astype(pn.mpct.dtype); pn["melig"] = pn.melig & ~hide; pn["target"] = pn.target | hide
     return pn
 
 

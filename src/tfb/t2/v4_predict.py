@@ -1,8 +1,7 @@
-"""Deploy the frozen V4 onset ensemble while preserving every V2 ongoing row.
+"""Deploy the V4 onset ensemble while preserving every V2 ongoing row.
 
-Only existing final models/capacities are read. Raw float64 probabilities are
-decoded over all links at T+30; T+5..T+25 remain zero. Shared QA writes its own
-temporary full carrier and evidence under outputs/t2/v4, never v1/v2/v3 proof.
+Only existing final models/capacities are read. Raw float64 probabilities are decoded over all links at T+30;
+T+5..T+25 remain zero.
 """
 from __future__ import annotations
 
@@ -10,14 +9,10 @@ import argparse
 import gc
 import hashlib
 import json
-import os
 from pathlib import Path
-import subprocess
-import tempfile
 
 import numpy as np
 import pandas as pd
-import polars as pl
 
 from .context import _current_day_times, build_day_context
 from .features import build_features
@@ -110,7 +105,7 @@ def _model_probability(models, x, names, *, selection=None):
     if x.ndim != 2 or x.shape[1] != len(names) or expected.shape != (len(names),):
         raise ValueError("V4 full feature width differs from feature names/mask")
     if len(models) != len(SEEDS):
-        raise ValueError("V4 requires all three frozen seed models")
+        raise ValueError("V4 requires all three seed models")
     values = []
     for seed, model in zip(SEEDS, models):
         if not np.array_equal(np.asarray(model.mask, bool), expected):
@@ -119,7 +114,7 @@ def _model_probability(models, x, names, *, selection=None):
         if model.booster.feature_name() != selected_names:
             raise ValueError("V4 booster feature schema differs from generated names")
         if int(model.booster.params.get("seed", -1)) != seed:
-            raise ValueError("V4 frozen model seed differs from required ensemble")
+            raise ValueError("V4 model seed differs from required ensemble")
         probability = np.asarray(model.predict(x), np.float64)
         if probability.shape != (len(x),) or not np.isfinite(probability).all() or ((probability < 0) | (probability > 1)).any():
             raise ValueError("V4 model probabilities must be finite marginals in [0,1]")
@@ -142,7 +137,7 @@ def iter_onset_probabilities(args, provenance):
             _remember(provenance, source)
         metadata = json.loads(path.with_suffix(".training.json").read_text())
         if metadata["seed"] != seed or metadata["rounds"] != model.booster.current_iteration():
-            raise ValueError("V4 final model differs from its frozen training metadata")
+            raise ValueError("V4 final model differs from its training metadata")
         if selection["family"] == "compact" and (
                 metadata.get("variant") != selection["variant"] or metadata.get("fold") != "final"
                 or metadata.get("heldout") is not None):
@@ -160,7 +155,7 @@ def iter_onset_probabilities(args, provenance):
         with np.load(capacity_path) as data:
             capacity = {key: data[key] for key in data.files}
         if "capacity_discharge_only" not in capacity:
-            raise ValueError("V4 requires the frozen discharge-only capacity branch")
+            raise ValueError("V4 requires the discharge-only capacity branch")
         schema_path = args.output / "v4/data/final" / f"{panel}.npz"
         with np.load(schema_path) as data:
             frozen_names = data["feature_names"].tolist()
@@ -211,13 +206,13 @@ def _conditions(args):
 def _source_probabilities(path, frame):
     source = pd.read_parquet(path)
     if list(source.columns) != [*KEYS, "queue_prob"] or source[KEYS].isna().any().any() or source.duplicated(KEYS).any():
-        raise ValueError("Frozen V2 probability keys/schema are invalid")
+        raise ValueError("V2 probability keys/schema are invalid")
     if len(source) != len(frame):
-        raise ValueError("Frozen V2 probability coverage differs")
+        raise ValueError("V2 probability coverage differs")
     index = pd.MultiIndex.from_frame(frame[KEYS])
     aligned = source.set_index(KEYS).reindex(index).queue_prob.to_numpy(np.float64)
     if not np.isfinite(aligned).all() or ((aligned < 0) | (aligned > 1)).any():
-        raise ValueError("Frozen V2 probabilities missing or outside [0,1]")
+        raise ValueError("V2 probabilities missing or outside [0,1]")
     return aligned
 
 
@@ -228,41 +223,7 @@ def verify_submission(args, path):
     return result
 
 
-def shared_check(args, queue):
-    """Use the shared checker without writing any existing verification file."""
-    expected, key = _contracts(args)
-    candidate, checked_queue = _validate_queue(queue, expected, key)
-    mapped = key.join(candidate, on=KEYS, how="left", validate="1:1").select(
-        "submission_id", pl.col("queue_pred").alias("new_queue"))
-    carrier_path = Path(getattr(args, "carrier", PROJECT / "outputs/submissions/baseline_v0.csv"))
-    carrier_hash = _sha(carrier_path)
-    carrier = pl.read_csv(carrier_path, schema_overrides={"submission_id": pl.String})
-    columns = carrier.columns
-    joined = (carrier.join(mapped, on="submission_id", how="left", validate="1:1")
-        .with_columns(pl.when(pl.col("task") == "queue").then(pl.col("new_queue"))
-                      .otherwise(pl.col("queue_pred")).alias("queue_pred")).select(columns))
-    if joined.filter(pl.col("task") == "queue")["queue_pred"].null_count():
-        raise ValueError("Missing queue mapping in temporary carrier")
-    target = args.output / "v4/qa"
-    target.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="onset_", dir=target) as directory:
-        path = Path(directory) / "combined.csv"
-        joined.write_csv(path)
-        result = subprocess.run(["make", "check", f"SUB={path.resolve()}"], cwd=PROJECT,
-            env={**os.environ, "TFB_RELEASE": str(args.root.resolve()), "PYTHONDONTWRITEBYTECODE": "1"},
-            text=True, capture_output=True)
-        (target / "make_check_queue_submission_v4_onset.log").write_text(result.stdout + result.stderr)
-        manifest = dict(queue=str(queue), queue_sha256=checked_queue["sha256"], carrier=str(carrier_path),
-            carrier_sha256=carrier_hash, returncode=result.returncode, temporary_carrier_removed=True, submitted=False)
-        dump_json(target / "make_check_queue_submission_v4_onset.json", manifest)
-        if result.returncode:
-            raise RuntimeError("V4 shared make check failed; see v4/qa log")
-    if _sha(carrier_path) != carrier_hash:
-        raise RuntimeError("Read-only shared carrier changed during V4 QA")
-    return manifest
-
-
-def predict(args, *, check=True):
+def predict(args):
     args.root, args.output = Path(args.root), Path(args.output)
     immutable = _immutable_hashes(args.output)
     selection = _selection(args)
@@ -273,7 +234,7 @@ def predict(args, *, check=True):
     original = frame.copy(deep=True)
     conditions = frame.window_id.map(_conditions(args))
     if conditions.isna().any():
-        raise ValueError("Frozen V2 contains a window absent from the published indices")
+        raise ValueError("V2 contains a window absent from the published indices")
     onset = conditions.eq("queue_onset").to_numpy()
     ongoing = ~onset
     probabilities = _source_probabilities(args.output / "probs_v2.parquet", frame)
@@ -314,7 +275,7 @@ def predict(args, *, check=True):
     pd.testing.assert_frame_equal(frame.loc[ongoing], original.loc[ongoing], check_exact=True)
     np.testing.assert_array_equal(probabilities[ongoing], old_probability[ongoing])
     if immutable != _immutable_hashes(args.output):
-        raise RuntimeError("Frozen source or QA artifacts changed during V4 prediction")
+        raise RuntimeError("Source artifacts changed during V4 prediction")
     destination = args.output / "queue_submission_v4_onset.csv"
     temporary = destination.with_suffix(".tmp.csv")
     frame.to_csv(temporary, index=False)
@@ -327,20 +288,18 @@ def predict(args, *, check=True):
     probability_frame.to_parquet(probability_temporary, index=False)
     probability_temporary.replace(probability_path)
     verification = verify_submission(args, destination)
-    qa = shared_check(args, destination) if check else None
     if immutable != _immutable_hashes(args.output):
-        raise RuntimeError("Frozen source or QA artifacts changed during V4 verification")
+        raise RuntimeError("Source artifacts changed during V4 verification")
     target = args.output / "v4"
     pd.DataFrame(changes).to_csv(target / "prediction_changes.csv", index=False)
     manifest = dict(rows=len(frame), onset_rows=int(onset.sum()), ongoing_rows=int(ongoing.sum()),
         onset_windows=len(changes), seeds=list(SEEDS), output=str(destination), sha256=_sha(destination),
         model_selection=selection,
         probability_output=str(probability_path), probability_sha256=_sha(probability_path),
-        probability_stage="float64 raw V4 onset mean; frozen raw V2 ongoing probabilities copied",
+        probability_stage="float64 raw V4 onset mean; raw V2 ongoing probabilities copied",
         onset_t5_t25_zero=True, ongoing_predictions_unchanged=True, ongoing_probabilities_unchanged=True,
         changed_cells=sum(row["changed_cells"] for row in changes), positive_rows=int(frame.queue_pred.sum()),
-        frozen_artifact_hashes=immutable, input_sha256=provenance, verification=verification,
-        shared_check=qa, submitted=False)
+        frozen_artifact_hashes=immutable, input_sha256=provenance, verification=verification)
     dump_json(target / "prediction_manifest.json", manifest)
     log(f"V4 onset output: {len(frame):,} rows; {manifest['changed_cells']} onset cells changed; ongoing exact V2")
     return manifest
@@ -350,13 +309,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=RELEASE_ROOT)
     parser.add_argument("--output", type=Path, default=PROJECT / "outputs/t2")
-    parser.add_argument("--carrier", type=Path, default=PROJECT / "outputs/submissions/baseline_v0.csv")
     parser.add_argument("--threads", type=int, default=2)
-    parser.add_argument("--skip-shared-check", action="store_true")
     args = parser.parse_args()
     args.root = resolve_root(args.root)
     args.panels = panel_names(args.root)
-    manifest = predict(args, check=not args.skip_shared_check)
+    manifest = predict(args)
     print(json.dumps({key: manifest[key] for key in ("rows", "sha256", "changed_cells", "ongoing_predictions_unchanged")}, indent=2))
 
 

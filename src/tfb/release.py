@@ -36,7 +36,7 @@ def unpack_components():
 
 
 def unpack_t2():
-    """--skip-train: the Task 2 members' final probabilities on the released windows (their training was not rerun)."""
+    """--skip-train: the Task 2 members' final probabilities on the released windows."""
     for name, d in T2_FILES.items(): _copy(ART / "weights" / "t2" / name, io.OUTPUTS / d / name)
 
 
@@ -54,19 +54,19 @@ def lgbm_predict(seeds):
             pn_train = cache.load(panel, "train")
             for split in ("validation", "private"):
                 pn = cache.load(panel, split)
-                preds[(panel, split)] = T.predict_panel(models, cols, pn, pn_train, None, np.ones(len(pn.mspeed), bool))[:2]
+                preds[(panel, split)] = T.predict_panel(models, cols, pn, pn_train, None, np.ones(len(pn.mspeed), bool))
         out = io.OUTPUTS / "t1" / f"state_submission{suf}.csv"; out.parent.mkdir(parents=True, exist_ok=True)
         write_state(preds, out, meta=dict(model="pooled LGBM (shipped booster)", seed=s)); print("wrote", out, flush=True)
 
 
 def mlp(seeds, train: bool):
-    """MLP random_12: feature export (as tfb.t1.mlp_colab.workflow.feature_bundle), then 3 seeds trained or predicted."""
+    """MLP random_12: feature export, then 3 seeds trained or predicted."""
     import torch
-    from .t1 import train as T, features as FE
+    from .t1 import train as T
     from .t1.mlp_colab import runner, workflow as W
     from .t1.mlp_colab.export import export_final
     assert W.resolve_config(MLP_CONFIG)[1] == MLP_TAG
-    T.SEED, T.TRANS, T.TW, T.CW, T.DENSITY, FE.FDF = 42, 8, 1.0, 1.0, False, False
+    T.SEED, T.TRANS, T.TW, T.CW = 42, 8, 1.0, 1.0
     root = io.OUTPUTS / "mlp"; dev = "cuda" if torch.cuda.is_available() else "cpu"
     if not (root / "manifest.json").exists():
         meta = export_final(root, io.panels())

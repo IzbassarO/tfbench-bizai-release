@@ -1,4 +1,4 @@
-"""Task 2 online check: no recipe member may read a released value after the forecast origin T.
+"""Task 2 online check: no member may read a released value after the forecast origin T.
 
 For every released validation/private Task 2 window, rebuilds each member's deployed per-window model inputs
 twice: from the released data, and from a copy in which every row after T is blanked (--fill nan) or replaced
@@ -31,12 +31,12 @@ from contextlib import contextmanager
 from tfb.t2b import build, cv, data as TD, evaluate as ev, features as FT, model as M, run as TR
 
 OUT = io.OUTPUTS / "t2"
-MEMBERS = ("v2", "v4", "t2b", "t2b_v2l")   # the recipe members of both finals (configs/finals.yaml)
+MEMBERS = ("v2", "v4", "t2b", "t2b_v2l")   # the members of both finals (configs/finals.yaml)
 
 
 @contextmanager
 def v2l_enabled():
-    """Slow-link features of the v2l ongoing member (tfb.t2b.v2like; see report, Sec. III-C, candidate cand_a2692183_og50v2l)."""
+    """Slow-link features of the v2l ongoing member (tfb.t2b.v2like)."""
     FT.V2L["slow"] = True
     try:
         yield

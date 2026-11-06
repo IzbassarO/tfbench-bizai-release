@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import gc
-import json
 from pathlib import Path
 
 import numpy as np
@@ -65,16 +64,6 @@ def onset_head_rarity(train_heads, train_origins, eval_heads, eval_origins, *, r
             head_prior_unsupported=n == 0, nonrecurrent_onset=bool(head >= 0 and frequency < .05)))
     return pd.DataFrame(rows, columns=["head_prior", "head_event_count", "head_matching_events",
         "head_total_events", "head_unknown_events", "head_prior_unsupported", "nonrecurrent_onset"])
-
-
-def whole_window_lobo_mask(train_panels, train_heads, heldout_panel, heldout_head):
-    """Keep all cells except windows assigned to the held-out panel/head."""
-    panels, heads = np.asarray(train_panels).astype(str), np.asarray(train_heads, int)
-    if panels.shape != heads.shape:
-        raise ValueError("Panel and repeated window-head metadata must align")
-    if heldout_head < 0:
-        raise ValueError("An unknown/empty head cannot define a LOBO group")
-    return ~((panels == heldout_panel) & (heads == heldout_head))
 
 
 def _source(args, fold):
@@ -218,7 +207,7 @@ def prepare_features(args, fold, panel, network, arrays):
             raise ValueError(f"V4 schema requires {EXPECTED_NEW_FEATURES} new columns, found {len(names)}")
         assert not any("head_index" in name or "head_prior" in name or name.startswith("location_") for name in names)
         # Independently replay the original 183 columns and the 58 V2 columns
-        # to prove that added metadata/features align with the frozen samples.
+        # to prove that added metadata/features align with the samples.
         original, original_names = build_features(history.speed, history.flow, history.occupancy,
             origin=12, timestamps=history.timestamps, ramp_on=history.ramp_on,
             location_prior=prior, panel_id=panel_names(args.root).index(panel), **network.feature_kwargs())
@@ -243,7 +232,7 @@ def prepare_features(args, fold, panel, network, arrays):
     dump_json(destination/f"{panel}_build.json",dict(fold=fold,panel=panel,training_rows=offset,
         eval_windows=eval_offset,source_columns=288,new_columns=len(names),
         training_cutoff_exclusive=CUTOFF[fold],base_feature_alignment_checked=241,
-        raw_heads_are_metadata_only=True,head_event_frequency_is_metadata_only=True,submitted=False))
+        raw_heads_are_metadata_only=True,head_event_frequency_is_metadata_only=True))
     log(f"V4 saved {fold}/{panel}: {offset:,} rows, {eval_offset} eval, {len(names)} new columns")
 
 

@@ -1,7 +1,7 @@
 """Pooled physics-feature queue models (no link/panel identity) + expected-IoU decoding.
 
 Onset: one row per (window, link), target = queued at T+30; T+5..T+25 predicted 0
-(organizer-confirmed selection artifact). Ongoing: one row per (window, link, h).
+(onset windows: the first queue is at T+30). Ongoing: one row per (window, link, h).
 Optional location priors (fit-period queue frequency) are separate columns so the
 "noloc" variant can drop them.
 """
@@ -48,14 +48,9 @@ def priors(panel: str, days) -> dict:
 
 
 def prior_cols(pr: dict, tod_h: np.ndarray) -> dict:
-    """pr['ph'] is [L, 24] (one prior) or [n, L, 24] (per-window test-month prior); onset [L] or [n, L]."""
-    if "cols" in pr:  # precomputed per-window columns (onset_tm)
-        return pr["cols"]
+    """pr['ph'] is [L, 24], pr['onset'] is [L]."""
     h = np.clip(tod_h.astype(int), 0, 23); h30 = np.clip((tod_h + 0.5).astype(int), 0, 23)
     ph, on = pr["ph"], pr["onset"]
-    if ph.ndim == 3:
-        i = np.arange(len(h))
-        return {"p_q_hour": ph[i, :, h], "p_q_hour30": ph[i, :, h30], "p_onset": on}
     return {"p_q_hour": ph[:, h].T, "p_q_hour30": ph[:, h30].T,
             "p_onset": np.broadcast_to(on, (len(tod_h), len(on)))}
 
@@ -65,21 +60,15 @@ def panel_rows(B: dict, net: dict, meta: pd.DataFrame, pr: dict, cond: str):
     t = meta.t.to_numpy(); tod = (t % DAY) / 12.0
     dow = pd.to_datetime(meta.date).dt.dayofweek.to_numpy()
     st = FT.static(net, pr.get("cemp")); wt = FT.window_tensors(B, net)
-    if FT.V2L["day"] and "panel" in meta:
-        from .v2like import day_context
-        B = dict(B, DC=day_context(meta, B["S"], net))
     Xl, names, geo = FT.link_features(B, net, st, wt, tod, dow, prior_cols(pr, tod))
     n, L, _ = Xl.shape
     hs = [6] if cond == "queue_onset" else [1, 2, 3, 4, 5, 6]
     Xs, idx = [], []
     for h in hs:
-        parts = [Xl, FT.horizon_features(geo, st["x"], h)]
-        if FT.ALIVE["on"]:
-            parts.append(FT.alive_h(geo["alive"], h, L))
-        Xs.append(np.concatenate(parts + [np.full((n, L, 1), h, np.float32)], -1).reshape(n * L, -1))
+        Xs.append(np.concatenate([Xl, FT.horizon_features(geo, st["x"], h), np.full((n, L, 1), h, np.float32)], -1).reshape(n * L, -1))
         w, j = np.divmod(np.arange(n * L), L)
         idx.append(np.stack([w, np.full(n * L, h), j], 1))
-    return np.concatenate(Xs), names + ["e_shock", "e_kin", "e_pers"] + (list(FT.ALIVE_H) if FT.ALIVE["on"] else []) + ["h"], np.concatenate(idx)
+    return np.concatenate(Xs), names + ["e_shock", "e_kin", "e_pers"] + ["h"], np.concatenate(idx)
 
 
 PARAMS = dict(objective="binary", learning_rate=0.05, num_leaves=31, min_data_in_leaf=200,

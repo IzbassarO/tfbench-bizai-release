@@ -1,1 +1,2 @@
-"""Drive-backed Colab experiments on frozen Task 1 MLP holdouts."""
+"""Task 1 MLP member: feature export, training and prediction.
+"""

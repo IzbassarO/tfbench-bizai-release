@@ -1,35 +1,9 @@
-"""Read-only access to family A's Task 2 CV windows/predictions (outputs/t2/v3/eval) and submission."""
+"""Read-only access to family A's Task 2 queue files."""
 from __future__ import annotations
 import numpy as np
 import pandas as pd
 from .. import io
-from . import build, data
-
-EVAL = io.OUTPUTS / "t2" / "v3" / "eval"
-
-
-def windows(fold: str, panel: str, official_only: bool = True) -> dict:
-    """family A eval windows for a panel (both conditions) as a train_at() bundle + family A arrays."""
-    metas, arrs = [], {}
-    for cond in ("queue_onset", "queue_ongoing"):
-        z = np.load(EVAL / fold / f"{panel}_{cond}.npz", allow_pickle=True)
-        csv = pd.read_csv(EVAL / fold / f"{panel}_{cond}.csv")
-        keep = csv.official_like.to_numpy(bool) if official_only else np.ones(len(csv), bool)
-        assert (csv.origin.to_numpy() == z["origin"]).all()
-        csv = csv[keep].assign(condition=cond)
-        metas.append(csv)
-        for k in z.files:
-            if k.startswith(("probability_", "prediction_")) or k in ("truth", "eligible"):
-                arrs.setdefault(k, []).append(z[k][keep])
-    meta = pd.concat(metas, ignore_index=True)
-    B = build.train_at(panel, meta.origin.tolist())
-    B["meta"] = B["meta"].assign(condition=meta.condition.to_numpy(), month=meta.origin.str[:7].to_numpy(),
-                                 block_day=0, window_id=meta.window_id.to_numpy(), shift_weight=meta.shift_weight.to_numpy())
-    from .. import cache
-    o = data.downstream_order(panel, cache.load(panel, "train")["links"])  # family A arrays are in cache order
-    B["codex"] = {k: np.concatenate(v)[..., o] for k, v in arrs.items() if len(v) == 2}
-    assert (B["codex"]["truth"] == B["Y"]).all()
-    return B
+from . import data
 
 
 def submission(path=io.OUTPUTS / "t2" / "queue_submission.csv") -> pd.DataFrame:

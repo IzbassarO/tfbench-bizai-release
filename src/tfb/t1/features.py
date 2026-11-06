@@ -1,13 +1,11 @@
 """Feature matrix for Task 1 cells. All features use the released masked layer + train profiles + ramps."""
 from __future__ import annotations
-import os
 import numpy as np
 import pandas as pd
 from .. import io
 from .base import fit_profiles, slot_of, interp_time
 
 PANEL_ID = {p: i for i, p in enumerate(io.panels())}
-FDF = os.environ.get("TFB_FDF", "0") == "1"   # FD-derived features (tfb.t1.cand candidate c); off = unchanged columns
 
 
 def shift_t(a, k):  # value at t+k
@@ -98,40 +96,10 @@ def build(pn, F, rows: np.ndarray, cols: np.ndarray) -> pd.DataFrame:
     # neighbour-based spatial interpolation at t (mean of nearest observed up/down base values)
     f["sp_mean_s"] = np.nanmean(np.stack([f["bs_l-1"], f["bs_l+1"]]), axis=0)
     f["sp_mean_f"] = np.nanmean(np.stack([f["bf_l-1"], f["bf_l+1"]]), axis=0)
-    if FDF:
-        fd_features(f, pn, cols)
     df = pd.DataFrame({k: np.asarray(v, dtype=np.float32) if np.asarray(v).dtype.kind == "f" else v for k, v in f.items()})
     return df
-
-
-def fd_features(f: dict, pn, cols):
-    """Triangular-FD views of the interpolated base: FD flow / speed at the base density and the base's residuals to
-    them, congestion / over-critical flags, neighbour relative densities and their gradient, congested-neighbour count."""
-    kj, kc, cap, vf = pn.k_jam[cols], f["k_crit"], f["cap"], f["v_f"]
-    with np.errstate(all="ignore"):
-        k = f["base_f"] / np.maximum(f["base_s"], 1)
-        qfd = np.where(k <= kc, vf * k, cap / np.maximum(kj - kc, 1e-9) * np.maximum(kj - k, 0))
-        f["fd_q_lane"] = qfd / f["lanes"]; f["fd_res_q_lane"] = (f["base_f"] - qfd) / f["lanes"]
-        f["fd_v"] = qfd / np.maximum(k, 1e-3); f["fd_res_v"] = f["base_s"] - f["fd_v"]
-        f["fd_cong"] = (f["base_v_rel"] < 0.6).astype(np.float32); f["fd_overcrit"] = (f["base_k_rel"] > 1).astype(np.float32)
-        for dj in (-1, 1):
-            f[f"bk_l{dj:+d}_rel"] = f[f"bf_l{dj:+d}"] / np.maximum(f[f"bs_l{dj:+d}"], 1) / shift_l(pn.k_crit[None, :], dj)[0][cols]
-        f["dk_rel"] = f["bk_l+1_rel"] - f["bk_l-1_rel"]
-        f["n_cong_nb"] = sum((f[f"bs_l{dj:+d}_rel"] < 0.6).astype(np.float32) for dj in (-3, -2, -1, 1, 2, 3))
 
 
 CAT = ["panel", "regime"]
 
 
-def build_bo(pn, F, rows: np.ndarray, cols: np.ndarray) -> pd.DataFrame:
-    """build() + ramp mass-balance features for cells inside a whole-panel blackout (ramps stay released there)."""
-    df = build(pn, F, rows, cols)
-    net = np.nan_to_num(F["ron"]) - np.nan_to_num(F["roff"])
-    cum = np.cumsum(net, axis=1)                                   # net ramp inflow from panel start through link j
-    miss = np.cumsum(~np.isfinite(F["ron"]) | ~np.isfinite(F["roff"]), axis=1).astype(np.float32)
-    prev = np.clip(rows - F["gp"][rows, cols], 0, None)            # own link's last observed row
-    df["cum_net"] = cum[rows, cols]; df["cum_net_prev"] = cum[prev, cols]
-    df["d_cum_net"] = df["cum_net"] - df["cum_net_prev"]; df["ramp_miss_up"] = miss[rows, cols]
-    for k in (-3, -2, 2, 3):
-        df[f"ron_t{k:+d}"] = shift_t(F["ron"], k)[rows, cols]; df[f"roff_t{k:+d}"] = shift_t(F["roff"], k)[rows, cols]
-    return df
